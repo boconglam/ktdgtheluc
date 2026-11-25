@@ -1,0 +1,10 @@
+{
+  "name": "KIỂM TRA ĐÁNH GIÁ THỂ LỰC HỌC SINH TRUNG HỌC PHỔ THÔNG",
+  "description": "Ứng dụng kiểm tra, đánh giá thể lực học sinh THPT tích hợp đo BMI, nhận diện tư thế camera, lưu trữ qua thời gian và xuất báo cáo hành chính PDF theo Quyết định 53/2008/QĐ-BGDĐT.",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
