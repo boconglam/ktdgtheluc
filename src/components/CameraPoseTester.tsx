@@ -1010,6 +1010,18 @@ export const CameraPoseTester: React.FC<Props> = ({
             <div className="flex items-center gap-1.5">
               <button
                 type="button"
+                onClick={() => (cameraActive ? stopCamera() : void startCamera())}
+                className={`min-h-[40px] px-3 inline-flex items-center gap-1.5 rounded-lg text-xs font-medium whitespace-nowrap ${
+                  cameraActive
+                    ? 'bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100'
+                    : 'bg-teal-700 text-white hover:bg-teal-800'
+                }`}
+              >
+                <Camera className="w-3.5 h-3.5 shrink-0" />
+                <span>{cameraActive ? 'Tắt Camera' : 'Bật Camera'}</span>
+              </button>
+              <button
+                type="button"
                 onClick={() => setSoundEnabled((v) => !v)}
                 className="min-h-[40px] min-w-[40px] flex items-center justify-center rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50"
                 title={soundEnabled ? 'Tắt âm báo' : 'Bật âm báo'}
@@ -1028,7 +1040,11 @@ export const CameraPoseTester: React.FC<Props> = ({
           </div>
 
           {/* Camera Feed & Canvas Alignment Overlay */}
-          <div className="relative bg-slate-950 aspect-video w-full overflow-hidden flex items-center justify-center">
+          <div
+            className={`relative bg-slate-950 w-full overflow-hidden flex items-center justify-center ${
+              cameraActive ? 'aspect-[4/3] sm:aspect-video' : 'min-h-[260px] sm:aspect-video'
+            }`}
+          >
             <video
               ref={videoRef}
               playsInline
@@ -1043,8 +1059,8 @@ export const CameraPoseTester: React.FC<Props> = ({
             />
 
             {!cameraActive && (
-              <div className="text-center p-6 space-y-3 max-w-md">
-                <Camera className="w-10 h-10 text-teal-400 mx-auto" />
+              <div className="text-center p-4 sm:p-6 space-y-2.5 sm:space-y-3 max-w-md">
+                <Camera className="w-9 h-9 sm:w-10 sm:h-10 text-teal-400 mx-auto" />
                 <div className="text-sm font-medium text-white">
                   Camera nhận diện tư thế &amp; vạch chuẩn căn chỉnh
                 </div>
