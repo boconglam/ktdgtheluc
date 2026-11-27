@@ -171,6 +171,8 @@ service cloud.firestore {
       && data.keys().hasOnly([
         'id', 'managingAuthority', 'schoolName', 'schoolYear', 'locationName',
         'documentCode', 'signerTitle', 'signerName', 'preparerName',
+        'schoolLevel', 'bmiPreset', 'bmiCountryLabel',
+        'bmiUnderweightMax', 'bmiNormalMax', 'bmiOverweightMax', 'bmiObese1Max', 'bmiAgeAdjust',
         'ownerUid', 'authorizedUids', 'createdAt', 'updatedAt'
       ])
       && isValidId(data.id)
@@ -182,6 +184,14 @@ service cloud.firestore {
       && data.signerTitle is string && data.signerTitle.size() <= 100
       && data.signerName is string && data.signerName.size() <= 120
       && data.preparerName is string && data.preparerName.size() <= 120
+      && (!('schoolLevel' in data) || data.schoolLevel in ['tat_ca', 'tieu_hoc', 'thcs', 'thpt', 'dai_hoc'])
+      && (!('bmiPreset' in data) || data.bmiPreset in ['vn_wpro', 'who_global', 'custom'])
+      && (!('bmiCountryLabel' in data) || (data.bmiCountryLabel is string && data.bmiCountryLabel.size() <= 100))
+      && (!('bmiUnderweightMax' in data) || (data.bmiUnderweightMax is number && data.bmiUnderweightMax >= 10 && data.bmiUnderweightMax <= 25))
+      && (!('bmiNormalMax' in data) || (data.bmiNormalMax is number && data.bmiNormalMax >= 15 && data.bmiNormalMax <= 32))
+      && (!('bmiOverweightMax' in data) || (data.bmiOverweightMax is number && data.bmiOverweightMax >= 18 && data.bmiOverweightMax <= 40))
+      && (!('bmiObese1Max' in data) || (data.bmiObese1Max is number && data.bmiObese1Max >= 22 && data.bmiObese1Max <= 50))
+      && (!('bmiAgeAdjust' in data) || data.bmiAgeAdjust is bool)
       && isValidId(data.ownerUid)
       && isValidUidArray(data.authorizedUids)
       && data.createdAt is timestamp
@@ -204,10 +214,10 @@ service cloud.firestore {
       && data.studentCode is string && data.studentCode.size() <= 40
       && data.fullName is string && data.fullName.size() >= 1 && data.fullName.size() <= 120
       && data.className is string && data.className.size() >= 1 && data.className.size() <= 30
-      && data.gradeLevel is int && data.gradeLevel >= 10 && data.gradeLevel <= 12
+      && data.gradeLevel is int && data.gradeLevel >= 1 && data.gradeLevel <= 16
       && data.gender in ['nam', 'nu']
-      && data.birthYear is int && data.birthYear >= 1995 && data.birthYear <= 2020
-      && data.age is int && data.age >= 14 && data.age <= 20
+      && data.birthYear is int && data.birthYear >= 1985 && data.birthYear <= 2025
+      && data.age is int && data.age >= 5 && data.age <= 35
       && data.notes is string && data.notes.size() <= 500
       && isValidId(data.ownerUid)
       && isValidUidArray(data.authorizedUids)
@@ -238,10 +248,10 @@ service cloud.firestore {
       && data.termLabel is string && data.termLabel.size() >= 1 && data.termLabel.size() <= 80
       && data.schoolYear is string && data.schoolYear.size() >= 1 && data.schoolYear.size() <= 40
       && data.testedAt is string && data.testedAt.size() >= 4 && data.testedAt.size() <= 40
-      && data.ageAtTest is int && data.ageAtTest >= 14 && data.ageAtTest <= 20
+      && data.ageAtTest is int && data.ageAtTest >= 5 && data.ageAtTest <= 60
       && data.gender in ['nam', 'nu']
-      && data.heightCm is number && data.heightCm >= 100 && data.heightCm <= 230
-      && data.weightKg is number && data.weightKg >= 20 && data.weightKg <= 180
+      && data.heightCm is number && data.heightCm >= 60 && data.heightCm <= 240
+      && data.weightKg is number && data.weightKg >= 10 && data.weightKg <= 200
       && data.bmi is number && data.bmi >= 8 && data.bmi <= 60
       && data.bmiCategory is string && data.bmiCategory.size() >= 1 && data.bmiCategory.size() <= 40
       && data.situpsCount is int && data.situpsCount >= 0 && data.situpsCount <= 120
@@ -404,11 +414,16 @@ service cloud.firestore {
           (isSuperAdmin() && incoming().diff(existing()).affectedKeys().hasOnly([
             'managingAuthority', 'schoolName', 'schoolYear', 'locationName',
             'documentCode', 'signerTitle', 'signerName', 'preparerName',
+            'schoolLevel', 'bmiPreset', 'bmiCountryLabel',
+            'bmiUnderweightMax', 'bmiNormalMax', 'bmiOverweightMax', 'bmiObese1Max', 'bmiAgeAdjust',
             'authorizedUids', 'updatedAt'
           ])) ||
           (isAdminOrSuper() && request.auth.uid in existing().authorizedUids && incoming().diff(existing()).affectedKeys().hasOnly([
             'managingAuthority', 'schoolName', 'schoolYear', 'locationName',
-            'documentCode', 'signerTitle', 'signerName', 'preparerName', 'updatedAt'
+            'documentCode', 'signerTitle', 'signerName', 'preparerName',
+            'schoolLevel', 'bmiPreset', 'bmiCountryLabel',
+            'bmiUnderweightMax', 'bmiNormalMax', 'bmiOverweightMax', 'bmiObese1Max', 'bmiAgeAdjust',
+            'updatedAt'
           ]))
         );
 

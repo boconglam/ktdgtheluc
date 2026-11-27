@@ -18,6 +18,7 @@ import { FilesetResolver, PoseLandmarker, type NormalizedLandmark } from '@media
 import type {
   EnduranceMode,
   FitnessAssessment,
+  SchoolAdminConfig,
   StudentProfile,
 } from '../types/fitness';
 import {
@@ -27,7 +28,9 @@ import {
   evaluateLongJump,
   evaluateOverallQd53,
   evaluateSitups,
+  extractBmiConfigFromSchool,
   formatGradeLabel,
+  formatSchoolLevelLabel,
   formatSecondsToMinSec,
   getThreshold,
 } from '../utils/qd53Standards';
@@ -39,6 +42,7 @@ interface Props {
   students: StudentProfile[];
   initialStudentId?: string;
   schoolYear: string;
+  schoolConfig?: SchoolAdminConfig;
   currentUid: string;
   canRecordTests: boolean;
   onSaveAssessment: (assessment: FitnessAssessment) => void;
@@ -158,6 +162,7 @@ export const CameraPoseTester: React.FC<Props> = ({
   students,
   initialStudentId,
   schoolYear,
+  schoolConfig,
   currentUid,
   canRecordTests,
   onSaveAssessment,
@@ -641,7 +646,7 @@ export const CameraPoseTester: React.FC<Props> = ({
             jumpPeakXRef.current = ankleX;
             const normDelta = Math.max(0, ankleX - jumpStartNormX);
             const estimatedCm = Math.round((normDelta / (1 - jumpStartNormX)) * jumpSpanCm);
-            setLongJumpCm(Math.min(350, Math.max(50, estimatedCm)));
+            setLongJumpCm(Math.min(400, Math.max(30, estimatedCm)));
             setUsedCameraAi(true);
           }
         } else if (activeTab === 'endurance') {
@@ -668,10 +673,10 @@ export const CameraPoseTester: React.FC<Props> = ({
           }
           prevHipXRef.current = hipCenterX;
         } else if (activeTab === 'bmi') {
-          // Estimate height from calibrated full-frame vertical span when alignment is chuẩn
+          // Estimate height from calibrated full-frame vertical span across children to adults
           if (distanceStatus === 'chuan') {
             const estimatedH = Math.round(bodyRatio * bmiFrameHeightCm);
-            if (estimatedH >= 135 && estimatedH <= 210) {
+            if (estimatedH >= 75 && estimatedH <= 225) {
               setHeightCm(estimatedH);
               setUsedCameraAi(true);
               const now = Date.now();
@@ -713,6 +718,7 @@ export const CameraPoseTester: React.FC<Props> = ({
         ctx.fillText('VẠCH CHUẨN THẢM NẰM (Đặt camera ngang hông)', w * 0.11, h * 0.82 - 8);
       } else if (activeTab === 'long_jump') {
         const startPx = jumpStartNormX * w;
+        const endPx = w * 0.94;
         ctx.strokeStyle = '#f43f5e';
         ctx.lineWidth = 3;
         ctx.beginPath();
@@ -723,13 +729,28 @@ export const CameraPoseTester: React.FC<Props> = ({
         ctx.font = '600 11px "Be Vietnam Pro", sans-serif';
         ctx.fillText('VẠCH XUẤT PHÁT (0 cm)', startPx + 6, h * 0.24);
 
-        // Ground ruler baseline
+        // Ground ruler baseline with graduated cm ticks
+        const baselineY = h * 0.86;
         ctx.strokeStyle = '#10b981';
         ctx.lineWidth = 2;
         ctx.beginPath();
-        ctx.moveTo(startPx, h * 0.86);
-        ctx.lineTo(w * 0.94, h * 0.86);
+        ctx.moveTo(startPx, baselineY);
+        ctx.lineTo(endPx, baselineY);
         ctx.stroke();
+
+        const stepCm = jumpSpanCm <= 180 ? 25 : 50;
+        ctx.fillStyle = '#a7f3d0';
+        ctx.font = '600 10px "JetBrains Mono", monospace';
+        for (let cm = stepCm; cm <= jumpSpanCm; cm += stepCm) {
+          const tickX = startPx + (cm / jumpSpanCm) * (endPx - startPx);
+          if (tickX <= endPx + 2) {
+            ctx.beginPath();
+            ctx.moveTo(tickX, baselineY - 6);
+            ctx.lineTo(tickX, baselineY + 6);
+            ctx.stroke();
+            ctx.fillText(`${cm}`, tickX - 10, baselineY + 17);
+          }
+        }
       } else if (activeTab === 'endurance') {
         ctx.strokeStyle = '#f97316';
         ctx.lineWidth = 3;
@@ -743,8 +764,25 @@ export const CameraPoseTester: React.FC<Props> = ({
       } else if (activeTab === 'bmi') {
         ctx.fillStyle = frameColor;
         ctx.font = '600 11px "Be Vietnam Pro", sans-serif';
-        ctx.fillText('VẠCH ĐỈNH ĐẦU', leftGuideX + 8, topGuideY - 6);
-        ctx.fillText('VẠCH GÓT CHÂN', leftGuideX + 8, bottomGuideY + 15);
+        ctx.fillText(`VẠCH ĐỈNH KHUNG (${bmiFrameHeightCm} cm)`, leftGuideX + 8, topGuideY - 6);
+        ctx.fillText('VẠCH GÓT CHÂN (0 cm)', leftGuideX + 8, bottomGuideY + 15);
+
+        // Vertical cm ruler ticks along leftGuideX for diverse body heights
+        const rulerH = bottomGuideY - topGuideY;
+        const stepCm = bmiFrameHeightCm <= 180 ? 20 : 30;
+        ctx.strokeStyle = frameColor;
+        ctx.lineWidth = 1.5;
+        ctx.font = '600 10px "JetBrains Mono", monospace';
+        for (let cm = 0; cm <= bmiFrameHeightCm; cm += stepCm) {
+          const tickY = bottomGuideY - (cm / bmiFrameHeightCm) * rulerH;
+          ctx.beginPath();
+          ctx.moveTo(leftGuideX - 8, tickY);
+          ctx.lineTo(leftGuideX + 4, tickY);
+          ctx.stroke();
+          if (cm > 0 && cm < bmiFrameHeightCm) {
+            ctx.fillText(`${cm}`, Math.max(4, leftGuideX - 34), tickY + 3);
+          }
+        }
       }
 
       // Horizon tilt level bar at top-center
@@ -883,8 +921,9 @@ export const CameraPoseTester: React.FC<Props> = ({
   const evalAge = selectedStudent?.age ?? 16;
   const evalGender = selectedStudent?.gender ?? 'nam';
   const threshold = getThreshold(evalAge, evalGender);
+  const bmiConfig = extractBmiConfigFromSchool(schoolConfig);
   const bmi = calculateBmi(heightCm, weightKg);
-  const bmiEval = classifyBmi(bmi, evalAge);
+  const bmiEval = classifyBmi(bmi, evalAge, bmiConfig);
   const situpsGrade = evaluateSitups(situpsCount, evalAge, evalGender);
   const longJumpGrade = evaluateLongJump(longJumpCm, evalAge, evalGender);
   const enduranceGrade = evaluateEndurance(enduranceValue, enduranceMode, evalAge, evalGender);
@@ -1205,7 +1244,7 @@ export const CameraPoseTester: React.FC<Props> = ({
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="text-xs text-slate-700">
                     <Ruler className="w-3.5 h-3.5 inline mr-1" />
-                    Thước chuẩn ngang khung: <strong className="font-mono">{jumpSpanCm} cm</strong> · Vạch
+                    Thước đo bật xa: <strong className="font-mono">{jumpSpanCm} cm</strong> · Vạch
                     xuất phát: <strong className="font-mono">{Math.round(jumpStartNormX * 100)}%</strong>
                   </div>
                   <div className="flex items-center gap-2">
@@ -1238,24 +1277,46 @@ export const CameraPoseTester: React.FC<Props> = ({
                     </button>
                   </div>
                 </div>
+                <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                  <span className="text-slate-500 mr-1">Khung theo đối tượng:</span>
+                  {[
+                    { label: 'Tiểu học (160 cm)', span: 160 },
+                    { label: 'THCS (240 cm)', span: 240 },
+                    { label: 'THPT / ĐH (320 cm)', span: 320 },
+                    { label: 'Khung rộng (380 cm)', span: 380 },
+                  ].map((preset) => (
+                    <button
+                      key={preset.span}
+                      type="button"
+                      onClick={() => setJumpSpanCm(preset.span)}
+                      className={`px-2.5 py-1 rounded-md border transition-colors ${
+                        jumpSpanCm === preset.span
+                          ? 'bg-teal-700 text-white border-teal-700'
+                          : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100'
+                      }`}
+                    >
+                      {preset.label}
+                    </button>
+                  ))}
+                </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
                   <label className="block">
-                    <span className="text-slate-600">Hiệu chỉnh chiều dài vùng nhìn (cm):</span>
+                    <span className="text-slate-600">Hiệu chỉnh độ dài thước (80–400 cm):</span>
                     <input
                       type="range"
-                      min="180"
-                      max="350"
+                      min="80"
+                      max="400"
                       value={jumpSpanCm}
                       onChange={(e) => setJumpSpanCm(Number(e.target.value))}
                       className="w-full mt-1"
                     />
                   </label>
                   <label className="block">
-                    <span className="text-slate-600">Vị trí vạch xuất phát trên khung:</span>
+                    <span className="text-slate-600">Vị trí vạch xuất phát (5–45%):</span>
                     <input
                       type="range"
-                      min="10"
-                      max="40"
+                      min="5"
+                      max="45"
                       value={Math.round(jumpStartNormX * 100)}
                       onChange={(e) => setJumpStartNormX(Number(e.target.value) / 100)}
                       className="w-full mt-1"
@@ -1317,19 +1378,43 @@ export const CameraPoseTester: React.FC<Props> = ({
             )}
 
             {activeTab === 'bmi' && (
-              <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 flex flex-wrap items-center justify-between gap-3 text-xs">
-                <div>
-                  Chiều cao khung chuẩn (từ vạch gót đến đỉnh khung):{' '}
-                  <strong className="font-mono">{bmiFrameHeightCm} cm</strong>
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-2.5 text-xs">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    Chiều cao khung thước chuẩn (gót → đỉnh khung):{' '}
+                    <strong className="font-mono">{bmiFrameHeightCm} cm</strong>
+                  </div>
+                  <input
+                    type="range"
+                    min="100"
+                    max="280"
+                    value={bmiFrameHeightCm}
+                    onChange={(e) => setBmiFrameHeightCm(Number(e.target.value))}
+                    className="w-48"
+                  />
                 </div>
-                <input
-                  type="range"
-                  min="180"
-                  max="250"
-                  value={bmiFrameHeightCm}
-                  onChange={(e) => setBmiFrameHeightCm(Number(e.target.value))}
-                  className="w-48"
-                />
+                <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                  <span className="text-slate-500 mr-1">Thước theo đối tượng:</span>
+                  {[
+                    { label: 'Tiểu học (160 cm)', h: 160 },
+                    { label: 'THCS (195 cm)', h: 195 },
+                    { label: 'THPT / ĐH (220 cm)', h: 220 },
+                    { label: 'Khung rộng (260 cm)', h: 260 },
+                  ].map((preset) => (
+                    <button
+                      key={preset.h}
+                      type="button"
+                      onClick={() => setBmiFrameHeightCm(preset.h)}
+                      className={`px-2.5 py-1 rounded-md border transition-colors ${
+                        bmiFrameHeightCm === preset.h
+                          ? 'bg-teal-700 text-white border-teal-700'
+                          : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100'
+                      }`}
+                    >
+                      {preset.label}
+                    </button>
+                  ))}
+                </div>
               </div>
             )}
 
@@ -1354,13 +1439,13 @@ export const CameraPoseTester: React.FC<Props> = ({
               Tổng hợp chỉ số &amp; Xếp loại QĐ 53/2008
             </h3>
             <p className="text-xs text-slate-500 mt-0.5">
-              Chuẩn áp dụng: {evalGender === 'nam' ? 'Nam' : 'Nữ'} · {evalAge} tuổi
+              Chuẩn áp dụng: {formatSchoolLevelLabel(threshold.level)} · {evalGender === 'nam' ? 'Nam' : 'Nữ'} · {evalAge} tuổi
             </p>
           </div>
 
           {/* BMI Auto Calculator */}
           <div className="border border-slate-200 rounded-xl p-3.5 space-y-3">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-2">
               <span className="text-xs font-semibold text-slate-800">1. Chỉ số khối cơ thể (BMI)</span>
               <span className="text-sm font-bold font-mono tabular-nums text-teal-700">
                 {bmi} kg/m² · {bmiEval.category}
@@ -1372,8 +1457,8 @@ export const CameraPoseTester: React.FC<Props> = ({
                 <input
                   type="number"
                   step="0.5"
-                  min="100"
-                  max="230"
+                  min="60"
+                  max="240"
                   value={heightCm}
                   onChange={(e) => setHeightCm(Number(e.target.value))}
                   className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-mono min-h-[42px]"
@@ -1384,15 +1469,18 @@ export const CameraPoseTester: React.FC<Props> = ({
                 <input
                   type="number"
                   step="0.5"
-                  min="20"
-                  max="180"
+                  min="10"
+                  max="200"
                   value={weightKg}
                   onChange={(e) => setWeightKg(Number(e.target.value))}
                   className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-mono min-h-[42px]"
                 />
               </label>
             </div>
-            <p className="text-[11px] text-slate-500">{bmiEval.advice}</p>
+            <div className="space-y-1">
+              <p className="text-[11px] font-medium text-teal-800">{bmiEval.thresholdsLabel}</p>
+              <p className="text-[11px] text-slate-500">{bmiEval.advice}</p>
+            </div>
           </div>
 
           {/* 3 Core Fitness Tests */}
@@ -1456,7 +1544,7 @@ export const CameraPoseTester: React.FC<Props> = ({
                 >
                   <option value="5min_m">Tùy sức 5 phút (m)</option>
                   <option value="distance_s">
-                    {evalGender === 'nam' ? 'Cự ly 1000m (giây)' : 'Cự ly 800m (giây)'}
+                    Cự ly {threshold.enduranceDistanceSec.distanceMeters}m (giây)
                   </option>
                 </select>
                 <input

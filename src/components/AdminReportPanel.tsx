@@ -1,8 +1,20 @@
 import React, { useMemo, useState } from 'react';
 import { FileDown, FileSpreadsheet, Loader2 } from 'lucide-react';
-import type { FitnessAssessment, SchoolAdminConfig, StudentProfile } from '../types/fitness';
+import type {
+  BmiStandardPreset,
+  FitnessAssessment,
+  SchoolAdminConfig,
+  SchoolLevel,
+  StudentProfile,
+} from '../types/fitness';
 import { buildAdministrativeHtml, exportAdministrativePdf } from '../services/pdfReportService';
 import { exportResultsExcel } from '../services/excelService';
+import {
+  SCHOOL_LEVEL_OPTIONS,
+  formatGradeLevelLabel,
+  getDefaultBmiStandard,
+  getGradeOptionsForLevel,
+} from '../utils/qd53Standards';
 
 interface Props {
   schoolConfig: SchoolAdminConfig;
@@ -28,6 +40,11 @@ export const AdminReportPanel: React.FC<Props> = ({
   );
   const [reportDate, setReportDate] = useState(new Date().toISOString().slice(0, 10));
   const [exporting, setExporting] = useState(false);
+
+  const gradeOptions = useMemo(
+    () => getGradeOptionsForLevel(schoolConfig.schoolLevel || 'tat_ca'),
+    [schoolConfig.schoolLevel]
+  );
 
   const uniqueClasses = useMemo(
     () => Array.from(new Set(students.map((s) => s.className))).sort(),
@@ -60,10 +77,10 @@ export const AdminReportPanel: React.FC<Props> = ({
 
   const scopeLabel =
     scopeType === 'grade'
-      ? `Khối ${selectedGrade}`
+      ? formatGradeLevelLabel(selectedGrade)
       : scopeType === 'class' && selectedClass
         ? `Lớp ${selectedClass}`
-        : 'Toàn trường';
+        : 'Toàn đơn vị';
 
   const termLabel = selectedTerm === 'all' ? 'Tổng hợp gần nhất' : selectedTerm;
 
@@ -119,11 +136,59 @@ export const AdminReportPanel: React.FC<Props> = ({
             Thông tin thể thức hành chính &amp; Xuất báo cáo
           </h3>
           <p className="text-xs text-slate-500 mt-0.5">
-            Nhập thủ công thông tin đơn vị chủ quản, cơ sở giáo dục, năm học, chức vụ và người lập báo cáo.
+            Nhập thủ công thông tin đơn vị chủ quản, cơ sở giáo dục, năm học, cấp học QĐ 53/2008, chức vụ và người lập báo cáo.
           </p>
         </div>
 
         <div className="space-y-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <label className="block text-xs">
+              <span className="font-medium text-slate-700">Cấp học (QĐ 53/2008)</span>
+              <select
+                value={schoolConfig.schoolLevel || 'thpt'}
+                onChange={(e) => {
+                  const nextLevel = e.target.value as SchoolLevel;
+                  const firstGrade = getGradeOptionsForLevel(nextLevel)[0]?.value ?? 10;
+                  setSelectedGrade(firstGrade);
+                  onUpdateSchoolConfig({ ...schoolConfig, schoolLevel: nextLevel });
+                }}
+                className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm min-h-[42px]"
+              >
+                {SCHOOL_LEVEL_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.shortLabel} ({opt.ageRangeLabel})
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="block text-xs">
+              <span className="font-medium text-slate-700">Chuẩn phân loại BMI</span>
+              <select
+                value={schoolConfig.bmiPreset || 'vn_wpro'}
+                onChange={(e) => {
+                  const preset = e.target.value as BmiStandardPreset;
+                  const std = getDefaultBmiStandard(preset);
+                  onUpdateSchoolConfig({
+                    ...schoolConfig,
+                    bmiPreset: std.preset,
+                    bmiCountryLabel: std.countryLabel,
+                    bmiUnderweightMax: std.underweightMax,
+                    bmiNormalMax: std.normalMax,
+                    bmiOverweightMax: std.overweightMax,
+                    bmiObese1Max: std.obese1Max,
+                    bmiAgeAdjust: std.ageAdjustUnder18,
+                  });
+                }}
+                className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm min-h-[42px]"
+              >
+                <option value="vn_wpro">Việt Nam / Châu Á (IDI &amp; WPRO)</option>
+                <option value="who_global">WHO Quốc tế (Châu Âu)</option>
+                <option value="custom">Tùy chỉnh ({schoolConfig.bmiCountryLabel || 'Quốc gia khác'})</option>
+              </select>
+            </label>
+          </div>
+
           <label className="block text-xs">
             <span className="font-medium text-slate-700">Tên cơ quan / cơ sở chủ quản</span>
             <input
@@ -141,7 +206,7 @@ export const AdminReportPanel: React.FC<Props> = ({
               type="text"
               value={schoolConfig.schoolName}
               onChange={(e) => updateField('schoolName', e.target.value)}
-              placeholder="VD: TRƯỜNG THPT ..."
+              placeholder="VD: TRƯỜNG TIỂU HỌC / THCS / THPT / ĐẠI HỌC ..."
               className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm min-h-[42px]"
             />
           </label>
@@ -163,7 +228,7 @@ export const AdminReportPanel: React.FC<Props> = ({
                 type="text"
                 value={schoolConfig.documentCode}
                 onChange={(e) => updateField('documentCode', e.target.value)}
-                placeholder="VD: Số: .../BC-THPT"
+                placeholder="VD: Số: .../BC-GDTC"
                 className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm min-h-[42px]"
               />
             </label>
@@ -244,23 +309,25 @@ export const AdminReportPanel: React.FC<Props> = ({
                 onChange={(e) => setScopeType(e.target.value as 'all' | 'grade' | 'class')}
                 className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm min-h-[42px]"
               >
-                <option value="all">Toàn trường ({students.length} HS)</option>
-                <option value="grade">Theo Khối lớp</option>
+                <option value="all">Toàn đơn vị ({students.length} HS/SV)</option>
+                <option value="grade">Theo Khối / Năm</option>
                 <option value="class">Theo Lớp cụ thể</option>
               </select>
             </label>
 
             {scopeType === 'grade' && (
               <label className="block text-xs">
-                <span className="font-medium text-slate-700">Chọn khối</span>
+                <span className="font-medium text-slate-700">Chọn khối / năm</span>
                 <select
                   value={selectedGrade}
                   onChange={(e) => setSelectedGrade(Number(e.target.value))}
                   className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm min-h-[42px]"
                 >
-                  <option value={10}>Khối 10</option>
-                  <option value={11}>Khối 11</option>
-                  <option value={12}>Khối 12</option>
+                  {gradeOptions.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
                 </select>
               </label>
             )}

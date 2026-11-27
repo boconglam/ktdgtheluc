@@ -84,11 +84,14 @@ export function buildReportSummary(students: StudentProfile[], assessments: Fitn
 export function buildAdministrativeHtml(payload: ReportExportPayload): string {
   const summary = buildReportSummary(payload.students, payload.assessments);
   const { day, month, year } = formatVietnameseDateParts(payload.reportDate);
-  const authority = escapeHtml(payload.schoolConfig.managingAuthority || 'SỞ GIÁO DỤC VÀ ĐÀO TẠO ...');
-  const school = escapeHtml(payload.schoolConfig.schoolName || 'TRƯỜNG THPT ...');
+  const authority = escapeHtml(payload.schoolConfig.managingAuthority || 'CƠ QUAN CHỦ QUẢN ...');
+  const school = escapeHtml(payload.schoolConfig.schoolName || 'CƠ SỞ GIÁO DỤC ...');
   const docCode = escapeHtml(payload.schoolConfig.documentCode || 'Số: .../BC-TLHS');
   const location = escapeHtml(payload.schoolConfig.locationName || 'Địa danh');
   const schoolYear = escapeHtml(payload.schoolConfig.schoolYear || '2025 - 2026');
+  const bmiLabel = escapeHtml(
+    payload.schoolConfig.bmiCountryLabel || 'Việt Nam / Châu Á (IDI & WPRO)'
+  );
   const signerTitle = escapeHtml(payload.schoolConfig.signerTitle || 'THỦ TRƯỞNG ĐƠN VỊ');
   const signerName = escapeHtml(payload.schoolConfig.signerName || '');
   const preparerName = escapeHtml(payload.schoolConfig.preparerName || '');
@@ -115,7 +118,7 @@ export function buildAdministrativeHtml(payload: ReportExportPayload): string {
           <td style="border:1px solid #334155;padding:5px 4px;text-align:center;">${assessment ? `${assessment.bmi} (${escapeHtml(assessment.bmiCategory)})` : '—'}</td>
           <td style="border:1px solid #334155;padding:5px 4px;text-align:center;">${assessment ? `${assessment.situpsCount} (${formatGradeLabel(assessment.situpsGrade)})` : '—'}</td>
           <td style="border:1px solid #334155;padding:5px 4px;text-align:center;">${assessment ? `${assessment.longJumpCm}cm (${formatGradeLabel(assessment.longJumpGrade)})` : '—'}</td>
-          <td style="border:1px solid #334155;padding:5px 4px;text-align:center;">${assessment ? `${formatEnduranceDisplay(assessment.enduranceValue, assessment.enduranceMode, student.gender)} (${formatGradeLabel(assessment.enduranceGrade)})` : '—'}</td>
+          <td style="border:1px solid #334155;padding:5px 4px;text-align:center;">${assessment ? `${formatEnduranceDisplay(assessment.enduranceValue, assessment.enduranceMode, student.gender, assessment.ageAtTest)} (${formatGradeLabel(assessment.enduranceGrade)})` : '—'}</td>
           <td style="border:1px solid #334155;padding:5px 4px;text-align:center;font-weight:700;color:${gradeColor};">${gradeText}</td>
         </tr>
       `;
@@ -144,7 +147,8 @@ export function buildAdministrativeHtml(payload: ReportExportPayload): string {
       <div style="text-align:center;margin:18px 0 16px;">
         <div style="font-size:16px;font-weight:700;text-transform:uppercase;letter-spacing:0.3px;">${escapeHtml(payload.reportTitle)}</div>
         <div style="font-size:12.5px;font-weight:700;margin-top:4px;">Theo Quyết định số 53/2008/QĐ-BGDĐT ngày 17/09/2008 của Bộ Giáo dục và Đào tạo</div>
-        <div style="font-size:12.5px;margin-top:3px;">Năm học: <strong>${schoolYear}</strong> &nbsp;|&nbsp; Đợt kiểm tra: <strong>${escapeHtml(payload.termLabel)}</strong> &nbsp;|&nbsp; Phạm vi: <strong>${escapeHtml(payload.scopeLabel)}</strong></div>
+        <div style="font-size:12px;margin-top:3px;">Năm học: <strong>${schoolYear}</strong> &nbsp;|&nbsp; Đợt: <strong>${escapeHtml(payload.termLabel)}</strong> &nbsp;|&nbsp; Phạm vi: <strong>${escapeHtml(payload.scopeLabel)}</strong></div>
+        <div style="font-size:11.5px;color:#334155;margin-top:2px;">Chuẩn BMI áp dụng: ${bmiLabel}</div>
       </div>
 
       <div style="margin-bottom:14px;">

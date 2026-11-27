@@ -22,9 +22,11 @@ import {
 import { onAuthStateChanged, signInWithPopup, signOut } from 'firebase/auth';
 import { auth, BOOTSTRAP_SUPER_ADMIN_EMAIL, googleProvider } from './firebase';
 import type {
+  BmiStandardPreset,
   FitnessAssessment,
   LocalWorkspaceBundle,
   SchoolAdminConfig,
+  SchoolLevel,
   StudentProfile,
   UserAccount,
 } from './types/fitness';
@@ -40,9 +42,15 @@ import {
   saveWorkspaceAsJson,
 } from './services/storageService';
 import {
+  SCHOOL_LEVEL_OPTIONS,
+  extractBmiConfigFromSchool,
   formatEnduranceDisplay,
   formatGenderLabel,
   formatGradeLabel,
+  formatGradeLevelLabel,
+  formatSchoolLevelLabel,
+  getDefaultBmiStandard,
+  getGradeOptionsForLevel,
 } from './utils/qd53Standards';
 import { buildSampleDataset } from './utils/sampleData';
 import { downloadExcelTemplate } from './services/excelService';
@@ -85,6 +93,7 @@ export default function App() {
 
   // Modals & filters
   const [showQd53Modal, setShowQd53Modal] = useState(false);
+  const [qd53InitialTab, setQd53InitialTab] = useState<'qd53' | 'bmi'>('qd53');
   const [showExcelModal, setShowExcelModal] = useState(false);
   const [showAddStudentModal, setShowAddStudentModal] = useState(false);
   const [showSaveJsonModal, setShowSaveJsonModal] = useState(false);
@@ -97,7 +106,7 @@ export default function App() {
   const [cameraStudentId, setCameraStudentId] = useState<string | undefined>(undefined);
 
   const [searchQuery, setSearchQuery] = useState('');
-  const [gradeFilter, setGradeFilter] = useState<'all' | 10 | 11 | 12>('all');
+  const [gradeFilter, setGradeFilter] = useState<'all' | number>('all');
   const [classFilter, setClassFilter] = useState<string>('all');
   const [selectedStudentIds, setSelectedStudentIds] = useState<Set<string>>(new Set());
   const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
@@ -296,6 +305,21 @@ export default function App() {
     [accessibleStudents]
   );
 
+  const activeBmiConfig = useMemo(
+    () => extractBmiConfigFromSchool(schoolConfig),
+    [schoolConfig]
+  );
+
+  const gradeFilterOptions = useMemo(() => {
+    const levelOpts = getGradeOptionsForLevel(schoolConfig.schoolLevel || 'thpt');
+    const seen = new Set(levelOpts.map((o) => o.value));
+    const extras = Array.from(new Set(accessibleStudents.map((s) => s.gradeLevel)))
+      .filter((g) => !seen.has(g))
+      .sort((a, b) => a - b)
+      .map((g) => ({ value: g, label: formatGradeLevelLabel(g), defaultAge: g + 5 }));
+    return [...levelOpts, ...extras];
+  }, [schoolConfig.schoolLevel, accessibleStudents]);
+
   const filteredStudents = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     return accessibleStudents.filter((s) => {
@@ -491,10 +515,10 @@ export default function App() {
       <aside className="hidden lg:flex lg:flex-col lg:w-64 lg:shrink-0 bg-white border-r border-slate-200 sticky top-0 h-screen">
         <div className="px-5 py-5 border-b border-slate-200">
           <div className="font-display text-lg font-bold tracking-tight text-slate-900 whitespace-nowrap">
-            Thể Lực THPT 53/2008
+            Thể Lực 53/2008
           </div>
           <p className="text-xs text-slate-500 mt-0.5 truncate">
-            {schoolConfig.schoolName || 'Quản lý đánh giá thể lực'}
+            {schoolConfig.schoolName || `${formatSchoolLevelLabel(schoolConfig.schoolLevel)} · Đánh giá thể lực`}
           </p>
         </div>
 
@@ -540,11 +564,14 @@ export default function App() {
           </div>
           <button
             type="button"
-            onClick={() => setShowQd53Modal(true)}
+            onClick={() => {
+              setQd53InitialTab('qd53');
+              setShowQd53Modal(true);
+            }}
             className="w-full flex items-center justify-center gap-2 px-3 py-2 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg min-h-[40px] whitespace-nowrap"
           >
             <BookOpen className="w-4 h-4" />
-            Bảng chuẩn 53/2008
+            Bảng chuẩn 53/2008 &amp; BMI
           </button>
           <div className="text-[11px] text-slate-500 leading-snug">
             {!authReady
@@ -562,14 +589,16 @@ export default function App() {
         <header className="sticky top-0 z-30 h-[52px] lg:h-16 bg-white/95 backdrop-blur-md border-b border-slate-200 px-4 lg:px-8 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3 min-w-0">
             <span className="lg:hidden font-display text-base font-bold text-slate-900 truncate">
-              Thể Lực THPT 53/2008
+              Thể Lực 53/2008
             </span>
             <div className="hidden lg:flex items-center gap-2 text-sm text-slate-500 whitespace-nowrap">
               <span className="font-medium text-slate-900">
                 {navItems.find((n) => n.id === activeTab)?.label}
               </span>
               <span aria-hidden="true">/</span>
-              <span>Năm học {schoolConfig.schoolYear || '2025 - 2026'}</span>
+              <span>
+                {formatSchoolLevelLabel(schoolConfig.schoolLevel)} · Năm học {schoolConfig.schoolYear || '2025 - 2026'}
+              </span>
             </div>
           </div>
 
@@ -581,7 +610,10 @@ export default function App() {
             </span>
             <button
               type="button"
-              onClick={() => setShowQd53Modal(true)}
+              onClick={() => {
+                setQd53InitialTab('qd53');
+                setShowQd53Modal(true);
+              }}
               className="lg:hidden min-h-[40px] px-3 text-xs font-medium text-slate-700 bg-slate-100 rounded-lg whitespace-nowrap"
             >
               Chuẩn 53/2008
@@ -592,7 +624,7 @@ export default function App() {
               className="hidden sm:inline-flex items-center gap-1.5 px-4 py-2 text-xs font-medium text-white bg-teal-700 hover:bg-teal-800 rounded-lg min-h-[40px] whitespace-nowrap shrink-0"
             >
               <Camera className="w-4 h-4" />
-              Đo Camera AI
+              Camera AI
             </button>
           </div>
         </header>
@@ -636,15 +668,81 @@ export default function App() {
           {/* VIEW 1: OVERVIEW */}
           {activeTab === 'overview' && (
             <div className="space-y-6">
+              {/* Standard Selector Strip: Cấp học (QĐ 53/2008) + Chuẩn BMI */}
+              <div className="bg-white border border-slate-200 rounded-2xl p-4 grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
+                <label className="block text-xs md:col-span-5">
+                  <span className="font-medium text-slate-700">Cấp học đánh giá (QĐ 53/2008/QĐ-BGDĐT)</span>
+                  <select
+                    value={schoolConfig.schoolLevel || 'thpt'}
+                    onChange={(e) => {
+                      const nextLevel = e.target.value as SchoolLevel;
+                      setGradeFilter('all');
+                      setSchoolConfig((prev) => ({ ...prev, schoolLevel: nextLevel }));
+                    }}
+                    className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm min-h-[42px]"
+                  >
+                    {SCHOOL_LEVEL_OPTIONS.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="block text-xs md:col-span-5">
+                  <span className="font-medium text-slate-700">Chuẩn phân loại BMI</span>
+                  <select
+                    value={activeBmiConfig.preset}
+                    onChange={(e) => {
+                      const preset = e.target.value as BmiStandardPreset;
+                      if (preset === 'custom') {
+                        setQd53InitialTab('bmi');
+                        setShowQd53Modal(true);
+                        return;
+                      }
+                      const std = getDefaultBmiStandard(preset);
+                      setSchoolConfig((prev) => ({
+                        ...prev,
+                        bmiPreset: std.preset,
+                        bmiCountryLabel: std.countryLabel,
+                        bmiUnderweightMax: std.underweightMax,
+                        bmiNormalMax: std.normalMax,
+                        bmiOverweightMax: std.overweightMax,
+                        bmiObese1Max: std.obese1Max,
+                        bmiAgeAdjust: std.ageAdjustUnder18,
+                      }));
+                    }}
+                    className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm min-h-[42px]"
+                  >
+                    <option value="vn_wpro">Việt Nam / Châu Á (IDI &amp; WPRO · Thừa cân ≥ 23.0)</option>
+                    <option value="who_global">WHO Quốc tế (Châu Âu · Thừa cân ≥ 25.0)</option>
+                    <option value="custom">Tùy chỉnh ({activeBmiConfig.countryLabel})</option>
+                  </select>
+                </label>
+
+                <div className="md:col-span-2 flex">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setQd53InitialTab('bmi');
+                      setShowQd53Modal(true);
+                    }}
+                    className="w-full px-3 py-2 text-xs font-medium text-teal-800 bg-teal-50 border border-teal-200 hover:bg-teal-100 rounded-lg min-h-[42px] whitespace-nowrap"
+                  >
+                    Tùy chỉnh BMI
+                  </button>
+                </div>
+              </div>
+
               {/* Empty state onboarding */}
               {students.length === 0 && (
                 <div className="bg-white border border-slate-200 rounded-2xl p-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
                   <div className="space-y-1">
                     <h2 className="text-lg font-semibold text-slate-900">
-                      Bắt đầu quản lý thể lực học sinh THPT
+                      Bắt đầu quản lý thể lực học sinh / sinh viên
                     </h2>
                     <p className="text-sm text-slate-600 max-w-2xl">
-                      Nhập danh sách học sinh từ tệp Excel, thêm thủ công, mở tệp *.json đã lưu hoặc nạp bộ dữ liệu minh họa theo Quyết định 53/2008/QĐ-BGDĐT.
+                      Nhập danh sách từ tệp Excel, thêm thủ công, mở tệp *.json đã lưu hoặc nạp bộ dữ liệu minh họa theo Quyết định 53/2008/QĐ-BGDĐT.
                     </p>
                   </div>
                   <div className="flex flex-wrap gap-2.5 shrink-0">
@@ -891,7 +989,7 @@ export default function App() {
                               <td className="py-3 px-4 font-mono tabular-nums">{a.situpsCount} lần</td>
                               <td className="py-3 px-4 font-mono tabular-nums">{a.longJumpCm} cm</td>
                               <td className="py-3 px-4 font-mono tabular-nums">
-                                {formatEnduranceDisplay(a.enduranceValue, a.enduranceMode, a.gender)}
+                                {formatEnduranceDisplay(a.enduranceValue, a.enduranceMode, a.gender, a.ageAtTest)}
                               </td>
                               <td className={`py-3 px-4 ${gradeTextClass(a.overallGrade)}`}>
                                 {formatGradeLabel(a.overallGrade)}
@@ -923,19 +1021,30 @@ export default function App() {
                     />
                   </div>
 
-                  <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-lg">
-                    {(['all', 10, 11, 12] as const).map((g) => (
+                  <div className="flex flex-wrap items-center gap-1 p-1 bg-slate-100 rounded-lg">
+                    <button
+                      type="button"
+                      onClick={() => setGradeFilter('all')}
+                      className={`px-3 py-1.5 text-xs font-medium rounded-md whitespace-nowrap min-h-[34px] ${
+                        gradeFilter === 'all'
+                          ? 'bg-white text-slate-900 shadow-xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      Tất cả
+                    </button>
+                    {gradeFilterOptions.map((opt) => (
                       <button
-                        key={g}
+                        key={opt.value}
                         type="button"
-                        onClick={() => setGradeFilter(g)}
+                        onClick={() => setGradeFilter(opt.value)}
                         className={`px-3 py-1.5 text-xs font-medium rounded-md whitespace-nowrap min-h-[34px] ${
-                          gradeFilter === g
+                          gradeFilter === opt.value
                             ? 'bg-white text-slate-900 shadow-xs'
                             : 'text-slate-600 hover:text-slate-900'
                         }`}
                       >
-                        {g === 'all' ? 'Tất cả' : `Khối ${g}`}
+                        {opt.label}
                       </button>
                     ))}
                   </div>
@@ -1104,7 +1213,7 @@ export default function App() {
                               </td>
                               <td className="py-3 px-4">
                                 <div>
-                                  Lớp {s.className} · Khối {s.gradeLevel}
+                                  Lớp {s.className} · {formatGradeLevelLabel(s.gradeLevel)}
                                 </div>
                                 <div className="text-slate-500">
                                   {formatGenderLabel(s.gender)} · {s.age} tuổi
@@ -1124,7 +1233,8 @@ export default function App() {
                                   ? formatEnduranceDisplay(
                                       latest.enduranceValue,
                                       latest.enduranceMode,
-                                      s.gender
+                                      s.gender,
+                                      latest.ageAtTest
                                     )
                                   : '—'}
                               </td>
@@ -1178,6 +1288,7 @@ export default function App() {
               students={accessibleStudents}
               initialStudentId={cameraStudentId}
               schoolYear={schoolConfig.schoolYear}
+              schoolConfig={schoolConfig}
               currentUid={currentUid}
               canRecordTests={effectivePermissions.canRecordTests}
               onSaveAssessment={handleSaveAssessment}
@@ -1248,7 +1359,13 @@ export default function App() {
       </nav>
 
       {/* Modals */}
-      <Qd53ReferenceModal open={showQd53Modal} onClose={() => setShowQd53Modal(false)} />
+      <Qd53ReferenceModal
+        open={showQd53Modal}
+        initialTab={qd53InitialTab}
+        onClose={() => setShowQd53Modal(false)}
+        schoolConfig={schoolConfig}
+        onUpdateSchoolConfig={setSchoolConfig}
+      />
 
       <ExcelImportModal
         open={showExcelModal}
@@ -1262,6 +1379,7 @@ export default function App() {
         open={showAddStudentModal}
         onClose={() => setShowAddStudentModal(false)}
         schoolId={schoolConfig.id || 'school_default'}
+        schoolLevel={schoolConfig.schoolLevel}
         ownerUid={currentUid}
         onSaveStudent={handleAddStudent}
       />
@@ -1270,6 +1388,7 @@ export default function App() {
         student={selectedStudent}
         assessments={accessibleAssessments}
         schoolYear={schoolConfig.schoolYear}
+        schoolConfig={schoolConfig}
         currentUid={currentUid}
         account={account}
         canRecordTests={effectivePermissions.canRecordTests}

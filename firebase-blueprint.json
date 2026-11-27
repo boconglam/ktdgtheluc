@@ -216,6 +216,41 @@
           "description": "Tên người lập báo cáo (nhập thủ công)",
           "maxLength": 120
         },
+        "schoolLevel": {
+          "type": "string",
+          "enum": ["tat_ca", "tieu_hoc", "thcs", "thpt", "dai_hoc"],
+          "description": "Cấp học áp dụng theo QĐ 53/2008/QĐ-BGDĐT"
+        },
+        "bmiPreset": {
+          "type": "string",
+          "enum": ["vn_wpro", "who_global", "custom"],
+          "description": "Bộ chuẩn phân loại BMI (Việt Nam IDI & WPRO, WHO, hoặc tùy chỉnh theo quốc gia)"
+        },
+        "bmiCountryLabel": {
+          "type": "string",
+          "description": "Tên quốc gia hoặc chuẩn BMI đang áp dụng",
+          "maxLength": 100
+        },
+        "bmiUnderweightMax": {
+          "type": "number",
+          "description": "Ngưỡng trên thiếu cân (người trưởng thành)"
+        },
+        "bmiNormalMax": {
+          "type": "number",
+          "description": "Ngưỡng trên bình thường (Việt Nam/Châu Á: 22.9)"
+        },
+        "bmiOverweightMax": {
+          "type": "number",
+          "description": "Ngưỡng trên thừa cân (Việt Nam/Châu Á: 24.9)"
+        },
+        "bmiObese1Max": {
+          "type": "number",
+          "description": "Ngưỡng trên béo phì độ I (Việt Nam/Châu Á: 29.9)"
+        },
+        "bmiAgeAdjust": {
+          "type": "boolean",
+          "description": "Bật hiệu chỉnh BMI theo độ tuổi học sinh dưới 18 tuổi"
+        },
         "ownerUid": {
           "type": "string",
           "maxLength": 128,
@@ -281,7 +316,7 @@
         },
         "gradeLevel": {
           "type": "integer",
-          "description": "Khối lớp THPT (10, 11, 12)"
+          "description": "Khối lớp hoặc năm học (1-5 Tiểu học, 6-9 THCS, 10-12 THPT, 13-16 ĐH/CĐ)"
         },
         "gender": {
           "type": "string",
@@ -292,7 +327,7 @@
         },
         "age": {
           "type": "integer",
-          "description": "Độ tuổi đánh giá theo QĐ 53/2008 (15-18)"
+          "description": "Độ tuổi đánh giá theo QĐ 53/2008 (6-30 tuổi)"
         },
         "notes": {
           "type": "string",

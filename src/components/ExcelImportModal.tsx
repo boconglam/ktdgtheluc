@@ -7,7 +7,7 @@ import {
   type ParsedExcelRow,
 } from '../services/excelService';
 import type { StudentProfile } from '../types/fitness';
-import { formatGenderLabel } from '../utils/qd53Standards';
+import { formatGenderLabel, formatGradeLevelLabel } from '../utils/qd53Standards';
 
 interface Props {
   open: boolean;
@@ -146,7 +146,7 @@ export const ExcelImportModal: React.FC<Props> = ({
                         <td className="py-2 px-3 font-mono tabular-nums">{r.studentCode}</td>
                         <td className="py-2 px-3 font-medium text-slate-900">{r.fullName || '—'}</td>
                         <td className="py-2 px-3">
-                          {r.className} (Khối {r.gradeLevel})
+                          {r.className} ({formatGradeLevelLabel(r.gradeLevel)})
                         </td>
                         <td className="py-2 px-3">
                           {formatGenderLabel(r.gender)} · {r.age} tuổi

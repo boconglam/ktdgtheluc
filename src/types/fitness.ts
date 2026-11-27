@@ -1,10 +1,22 @@
 export type UserRole = 'super_admin' | 'admin' | 'staff';
 export type Gender = 'nam' | 'nu';
-export type GradeLevel = 10 | 11 | 12;
+export type SchoolLevel = 'tat_ca' | 'tieu_hoc' | 'thcs' | 'thpt' | 'dai_hoc';
+export type BmiStandardPreset = 'vn_wpro' | 'who_global' | 'custom';
+export type GradeLevel = number; // 1-5 Tiểu học, 6-9 THCS, 10-12 THPT, 13-16 ĐH/CĐ
 export type FitnessGrade = 'tot' | 'dat' | 'chua_dat';
 export type EnduranceMode = '5min_m' | 'distance_s';
 export type CaptureMethod = 'camera_ai' | 'manual';
 export type AssessmentStatus = 'draft' | 'finalized';
+
+export interface BmiStandardConfig {
+  preset: BmiStandardPreset;
+  countryLabel: string;
+  underweightMax: number;
+  normalMax: number;
+  overweightMax: number;
+  obese1Max: number;
+  ageAdjustUnder18: boolean;
+}
 
 export const BLUEPRINT_LIMITS = {
   ID_MAX: 128,
@@ -17,6 +29,7 @@ export const BLUEPRINT_LIMITS = {
   LOCATION_MAX: 80,
   DOC_CODE_MAX: 60,
   SIGNER_TITLE_MAX: 100,
+  COUNTRY_LABEL_MAX: 100,
   STUDENT_CODE_MAX: 40,
   CLASS_NAME_MAX: 30,
   NOTES_MAX: 500,
@@ -71,6 +84,14 @@ export interface SchoolAdminConfig {
   signerTitle: string;
   signerName: string;
   preparerName: string;
+  schoolLevel?: SchoolLevel;
+  bmiPreset?: BmiStandardPreset;
+  bmiCountryLabel?: string;
+  bmiUnderweightMax?: number;
+  bmiNormalMax?: number;
+  bmiOverweightMax?: number;
+  bmiObese1Max?: number;
+  bmiAgeAdjust?: boolean;
   ownerUid: string;
   authorizedUids: string[];
   createdAt?: unknown;

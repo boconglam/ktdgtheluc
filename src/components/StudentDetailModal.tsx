@@ -3,6 +3,7 @@ import { Camera, Plus, Trash2, X, Lock, Unlock } from 'lucide-react';
 import type {
   EnduranceMode,
   FitnessAssessment,
+  SchoolAdminConfig,
   StudentProfile,
   UserAccount,
 } from '../types/fitness';
@@ -13,9 +14,12 @@ import {
   evaluateLongJump,
   evaluateOverallQd53,
   evaluateSitups,
+  extractBmiConfigFromSchool,
   formatEnduranceDisplay,
   formatGenderLabel,
   formatGradeLabel,
+  formatGradeLevelLabel,
+  getThreshold,
 } from '../utils/qd53Standards';
 import { createSafeId } from '../services/storageService';
 import { ProgressCharts } from './ProgressCharts';
@@ -24,6 +28,7 @@ interface Props {
   student: StudentProfile | null;
   assessments: FitnessAssessment[];
   schoolYear: string;
+  schoolConfig?: SchoolAdminConfig;
   currentUid: string;
   account: UserAccount | null;
   canRecordTests: boolean;
@@ -38,6 +43,7 @@ export const StudentDetailModal: React.FC<Props> = ({
   student,
   assessments,
   schoolYear,
+  schoolConfig,
   currentUid,
   account,
   canRecordTests,
@@ -69,17 +75,19 @@ export const StudentDetailModal: React.FC<Props> = ({
   const latest = studentAssessments[0];
   const isAdminOrSuper =
     account?.role === 'super_admin' || account?.role === 'admin' || !account;
+  const bmiConfig = extractBmiConfigFromSchool(schoolConfig);
+  const threshold = getThreshold(student.age, student.gender);
 
   const handleManualSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const h = Math.min(230, Math.max(100, Number(heightCm) || 165));
-    const w = Math.min(180, Math.max(20, Number(weightKg) || 55));
+    const h = Math.min(240, Math.max(60, Number(heightCm) || 165));
+    const w = Math.min(200, Math.max(10, Number(weightKg) || 55));
     const s = Math.min(120, Math.max(0, Math.round(Number(situpsCount) || 0)));
     const j = Math.min(450, Math.max(0, Number(longJumpCm) || 0));
     const ev = Math.min(5000, Math.max(0, Number(enduranceValue) || 0));
 
     const bmi = calculateBmi(h, w);
-    const bmiEval = classifyBmi(bmi, student.age);
+    const bmiEval = classifyBmi(bmi, student.age, bmiConfig);
     const situpsGrade = evaluateSitups(s, student.age, student.gender);
     const longJumpGrade = evaluateLongJump(j, student.age, student.gender);
     const enduranceGrade = evaluateEndurance(ev, enduranceMode, student.age, student.gender);
@@ -127,7 +135,7 @@ export const StudentDetailModal: React.FC<Props> = ({
             <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 mt-1">
               <span className="font-mono tabular-nums">{student.studentCode}</span>
               <span aria-hidden="true">·</span>
-              <span>Lớp {student.className} (Khối {student.gradeLevel})</span>
+              <span>Lớp {student.className} ({formatGradeLevelLabel(student.gradeLevel)})</span>
               <span aria-hidden="true">·</span>
               <span>{formatGenderLabel(student.gender)}</span>
               <span aria-hidden="true">·</span>
@@ -186,7 +194,7 @@ export const StudentDetailModal: React.FC<Props> = ({
               className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-4"
             >
               <div className="text-sm font-semibold text-slate-900">
-                Ghi nhận đợt kiểm tra thể lực mới
+                Ghi nhận đợt kiểm tra thể lực mới ({bmiConfig.countryLabel})
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                 <label className="block text-xs">
@@ -215,8 +223,8 @@ export const StudentDetailModal: React.FC<Props> = ({
                   <input
                     type="number"
                     step="0.1"
-                    min="100"
-                    max="230"
+                    min="60"
+                    max="240"
                     required
                     value={heightCm}
                     onChange={(e) => setHeightCm(e.target.value)}
@@ -228,8 +236,8 @@ export const StudentDetailModal: React.FC<Props> = ({
                   <input
                     type="number"
                     step="0.1"
-                    min="20"
-                    max="180"
+                    min="10"
+                    max="200"
                     required
                     value={weightKg}
                     onChange={(e) => setWeightKg(e.target.value)}
@@ -270,7 +278,7 @@ export const StudentDetailModal: React.FC<Props> = ({
                   >
                     <option value="5min_m">Chạy tùy sức 5 phút (mét)</option>
                     <option value="distance_s">
-                      Chạy {student.gender === 'nam' ? '1000m' : '800m'} (giây)
+                      Chạy {threshold.enduranceDistanceSec.distanceMeters}m (giây)
                     </option>
                   </select>
                 </label>
@@ -361,7 +369,7 @@ export const StudentDetailModal: React.FC<Props> = ({
                           </div>
                         </td>
                         <td className="py-2.5 px-3 font-mono tabular-nums">
-                          {formatEnduranceDisplay(a.enduranceValue, a.enduranceMode, a.gender)}
+                          {formatEnduranceDisplay(a.enduranceValue, a.enduranceMode, a.gender, a.ageAtTest)}
                           <div className={gradeTextClass(a.enduranceGrade)}>
                             {formatGradeLabel(a.enduranceGrade)}
                           </div>

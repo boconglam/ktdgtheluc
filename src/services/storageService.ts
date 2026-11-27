@@ -33,6 +33,7 @@ import {
   evaluateLongJump,
   evaluateOverallQd53,
   evaluateSitups,
+  extractBmiConfigFromSchool,
 } from '../utils/qd53Standards';
 
 const LOCAL_CACHE_KEY = 'the_luc_thpt_local_workspace_v1';
@@ -67,6 +68,14 @@ export function defaultSchoolConfig(ownerUid = 'local_user'): SchoolAdminConfig 
     signerTitle: 'THỦ TRƯỞNG ĐƠN VỊ',
     signerName: '',
     preparerName: '',
+    schoolLevel: 'thpt',
+    bmiPreset: 'vn_wpro',
+    bmiCountryLabel: 'Việt Nam / Châu Á (IDI & WPRO - Bộ Y tế)',
+    bmiUnderweightMax: 18.5,
+    bmiNormalMax: 23.0,
+    bmiOverweightMax: 25.0,
+    bmiObese1Max: 30.0,
+    bmiAgeAdjust: true,
     ownerUid: sanitizeId(ownerUid, 'local_user'),
     authorizedUids: [sanitizeId(ownerUid, 'local_user')],
   };
@@ -526,6 +535,7 @@ export async function syncWorkspaceToCloud(params: {
   try {
     const schoolRef = doc(db, 'schools', schoolId);
     const existingSchool = await getDoc(schoolRef);
+    const bmiConfig = extractBmiConfigFromSchool(params.schoolConfig);
     const schoolPayload = {
       id: schoolId,
       managingAuthority: truncateStr(params.schoolConfig.managingAuthority, BLUEPRINT_LIMITS.MANAGING_AUTHORITY_MAX),
@@ -536,6 +546,14 @@ export async function syncWorkspaceToCloud(params: {
       signerTitle: truncateStr(params.schoolConfig.signerTitle || 'THỦ TRƯỞNG ĐƠN VỊ', BLUEPRINT_LIMITS.SIGNER_TITLE_MAX),
       signerName: truncateStr(params.schoolConfig.signerName, BLUEPRINT_LIMITS.NAME_MAX),
       preparerName: truncateStr(params.schoolConfig.preparerName, BLUEPRINT_LIMITS.NAME_MAX),
+      schoolLevel: params.schoolConfig.schoolLevel || 'thpt',
+      bmiPreset: bmiConfig.preset,
+      bmiCountryLabel: truncateStr(bmiConfig.countryLabel, BLUEPRINT_LIMITS.COUNTRY_LABEL_MAX),
+      bmiUnderweightMax: Math.min(25, Math.max(10, Number(bmiConfig.underweightMax) || 18.5)),
+      bmiNormalMax: Math.min(32, Math.max(15, Number(bmiConfig.normalMax) || 23.0)),
+      bmiOverweightMax: Math.min(40, Math.max(18, Number(bmiConfig.overweightMax) || 25.0)),
+      bmiObese1Max: Math.min(50, Math.max(22, Number(bmiConfig.obese1Max) || 30.0)),
+      bmiAgeAdjust: Boolean(bmiConfig.ageAdjustUnder18),
       ownerUid: existingSchool.exists() ? (existingSchool.data().ownerUid as string) : uid,
       authorizedUids: authUids,
       createdAt: existingSchool.exists() ? existingSchool.data().createdAt : serverTimestamp(),
@@ -563,8 +581,8 @@ export async function syncWorkspaceToCloud(params: {
       const ownerUid = existingSnap?.exists() ? (existingSnap.data().ownerUid as string) : uid;
       const createdAt = existingSnap?.exists() ? existingSnap.data().createdAt : serverTimestamp();
       const studentAuthUids = buildAuthorizedUids(uid, s.authorizedUids, authUids);
-      const age = Math.min(20, Math.max(14, Math.round(s.age || 16)));
-      const gradeLevel = ([10, 11, 12].includes(s.gradeLevel) ? s.gradeLevel : 10) as 10 | 11 | 12;
+      const age = Math.min(35, Math.max(5, Math.round(s.age || 16)));
+      const gradeLevel = Math.min(16, Math.max(1, Math.round(s.gradeLevel || 10)));
 
       batch.set(ref, {
         id: sid,
@@ -574,7 +592,7 @@ export async function syncWorkspaceToCloud(params: {
         className: truncateStr(s.className, BLUEPRINT_LIMITS.CLASS_NAME_MAX) || '10A1',
         gradeLevel,
         gender: s.gender === 'nu' ? 'nu' : 'nam',
-        birthYear: Math.min(2020, Math.max(1995, Math.round(s.birthYear || 2009))),
+        birthYear: Math.min(2025, Math.max(1985, Math.round(s.birthYear || 2009))),
         age,
         notes: truncateStr(s.notes, BLUEPRINT_LIMITS.NOTES_MAX),
         ownerUid,
@@ -599,6 +617,7 @@ export async function syncWorkspaceToCloud(params: {
     assessChunks.push(filteredAssessments.slice(i, i + 350));
   }
 
+  const bmiConfig = extractBmiConfigFromSchool(params.schoolConfig);
   for (const chunk of assessChunks) {
     const batch = writeBatch(db);
     for (const a of chunk) {
@@ -610,12 +629,12 @@ export async function syncWorkspaceToCloud(params: {
       const createdAt = existingSnap?.exists() ? existingSnap.data().createdAt : serverTimestamp();
       const assessAuthUids = buildAuthorizedUids(uid, a.authorizedUids, authUids);
 
-      const heightCm = Math.min(230, Math.max(100, Number(a.heightCm) || 165));
-      const weightKg = Math.min(180, Math.max(20, Number(a.weightKg) || 55));
-      const ageAtTest = Math.min(20, Math.max(14, Math.round(a.ageAtTest || 16)));
+      const heightCm = Math.min(240, Math.max(60, Number(a.heightCm) || 165));
+      const weightKg = Math.min(200, Math.max(10, Number(a.weightKg) || 55));
+      const ageAtTest = Math.min(60, Math.max(5, Math.round(a.ageAtTest || 16)));
       const gender = a.gender === 'nu' ? 'nu' : 'nam';
       const bmi = calculateBmi(heightCm, weightKg);
-      const bmiEval = classifyBmi(bmi, ageAtTest);
+      const bmiEval = classifyBmi(bmi, ageAtTest, bmiConfig);
       const situpsCount = Math.min(120, Math.max(0, Math.round(a.situpsCount || 0)));
       const longJumpCm = Math.min(450, Math.max(0, Number(a.longJumpCm) || 0));
       const enduranceMode = a.enduranceMode === 'distance_s' ? 'distance_s' : '5min_m';
