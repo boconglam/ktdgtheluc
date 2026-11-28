@@ -239,9 +239,17 @@ export const CameraPoseTester: React.FC<Props> = ({
   const enduranceRunningRef = useRef(false);
   enduranceRunningRef.current = enduranceRunning;
 
-  // BMI Camera Height Calibration (known camera reference frame height in cm)
-  const [bmiFrameHeightCm, setBmiFrameHeightCm] = useState<number>(210);
+  // BMI Camera Height Calibration (known camera reference grid height in cm)
+  const [bmiFrameHeightCm, setBmiFrameHeightCm] = useState<number>(220);
+  const [bmiAutoCapture, setBmiAutoCapture] = useState<boolean>(true);
+  const [gridHeadNormY, setGridHeadNormY] = useState<number>(0.18);
+  const [gridFootNormY, setGridFootNormY] = useState<number>(0.86);
+  const [liveAiHeightCm, setLiveAiHeightCm] = useState<number | null>(null);
+  const [bmiScanning, setBmiScanning] = useState<boolean>(false);
   const bmiReadyCueAtRef = useRef<number>(0);
+  const bmiSamplesRef = useRef<number[]>([]);
+  const latestAiPointsRef = useRef<{ crownY: number; heelY: number; heightCm: number } | null>(null);
+  const draggingMarkerRef = useRef<'head' | 'foot' | null>(null);
 
   // Audio feedback & Anti-cheat shake detection state
   const [audioCueNotice, setAudioCueNotice] = useState<string>('');
@@ -506,9 +514,9 @@ export const CameraPoseTester: React.FC<Props> = ({
       ctx.lineTo(w, h / 2);
       ctx.stroke();
 
-      // Framing margin box (distance guide)
-      const topGuideY = h * 0.12;
-      const bottomGuideY = h * 0.88;
+      // Framing margin box (distance guide) — matches calibrated height grid 0.10 .. 0.90 (span 0.80)
+      const topGuideY = activeTab === 'bmi' ? h * 0.10 : h * 0.12;
+      const bottomGuideY = activeTab === 'bmi' ? h * 0.90 : h * 0.88;
       const leftGuideX = w * 0.16;
       const rightGuideX = w * 0.84;
 
@@ -530,7 +538,7 @@ export const CameraPoseTester: React.FC<Props> = ({
         const rAnkle = landmarks[28];
 
         const ys = landmarks
-          .filter((lm) => (lm.visibility ?? 1) > 0.35)
+          .filter((lm) => (lm.visibility ?? 1) > 0.3)
           .map((lm) => lm.y);
         const minY = ys.length ? Math.min(...ys) : nose.y;
         const maxY = ys.length ? Math.max(...ys) : Math.max(lAnkle.y, rAnkle.y);
@@ -543,16 +551,16 @@ export const CameraPoseTester: React.FC<Props> = ({
         const normalizedTilt = Math.min(shoulderAngle, Math.abs(180 - shoulderAngle));
         angleTilt = deviceTiltDeg > 0 ? deviceTiltDeg : Math.round(normalizedTilt);
 
-        const headCut = minY < 0.04;
-        const feetCut = maxY > 0.96;
+        const headCut = minY < 0.03;
+        const feetCut = maxY > 0.97;
 
         if (headCut || feetCut) {
           distanceStatus = 'thieu_khung';
           distanceLabel = 'Chưa thấy đủ đầu/chân — Điều chỉnh góc máy';
-        } else if (bodyRatio > 0.86) {
+        } else if (bodyRatio > 0.88) {
           distanceStatus = 'qua_gan';
           distanceLabel = 'Quá gần — Lùi camera ra xa hơn';
-        } else if (bodyRatio < 0.45 && activeTab !== 'situps') {
+        } else if (bodyRatio < 0.35 && activeTab !== 'situps') {
           distanceStatus = 'qua_xa';
           distanceLabel = 'Quá xa — Đưa camera lại gần hơn';
         } else {
@@ -673,21 +681,82 @@ export const CameraPoseTester: React.FC<Props> = ({
           }
           prevHipXRef.current = hipCenterX;
         } else if (activeTab === 'bmi') {
-          // Estimate height from calibrated full-frame vertical span across children to adults
-          if (distanceStatus === 'chuan') {
-            const estimatedH = Math.round(bodyRatio * bmiFrameHeightCm);
-            if (estimatedH >= 75 && estimatedH <= 225) {
-              setHeightCm(estimatedH);
-              setUsedCameraAi(true);
-              const now = Date.now();
-              if (now - bmiReadyCueAtRef.current > 5000) {
-                bmiReadyCueAtRef.current = now;
-                if (soundRef.current) playSuccessCue();
-                triggerCueBanner(`Đã đo chiều cao chuẩn: ${estimatedH} cm`);
+          // Crown-to-heel height estimation mapped directly to the calibrated 0.10..0.90 grid
+          const headIndices = [0, 1, 2, 3, 4, 5, 6, 7, 8];
+          const footIndices = [27, 28, 29, 30, 31, 32];
+          const headVisible = headIndices
+            .map((i) => landmarks[i])
+            .filter((lm) => lm && (lm.visibility ?? 1) > 0.25);
+          const footVisible = footIndices
+            .map((i) => landmarks[i])
+            .filter((lm) => lm && (lm.visibility ?? 1) > 0.25);
+          const shoulderVisible = [lShoulder, rShoulder].filter(
+            (lm) => lm && (lm.visibility ?? 1) > 0.25
+          );
+
+          if (headVisible.length > 0 && footVisible.length > 0 && shoulderVisible.length > 0) {
+            const eyeEarMinY = Math.min(...headVisible.map((lm) => lm.y));
+            const shoulderMidY =
+              shoulderVisible.reduce((sum, lm) => sum + lm.y, 0) / shoulderVisible.length;
+            const heelMaxY = Math.max(...footVisible.map((lm) => lm.y));
+
+            const headExtent = Math.max(0.025, shoulderMidY - eyeEarMinY);
+            const crownY = Math.max(0.01, eyeEarMinY - headExtent * 0.58);
+            const gridSpanNorm = 0.8; // topGuideY (0.10) -> bottomGuideY (0.90)
+            const rawHeightCm = ((heelMaxY - crownY) / gridSpanNorm) * bmiFrameHeightCm;
+
+            if (rawHeightCm >= 55 && rawHeightCm <= 235) {
+              const samples = bmiSamplesRef.current;
+              samples.push(rawHeightCm);
+              if (samples.length > 8) samples.shift();
+              const sorted = [...samples].sort((a, b) => a - b);
+              const smoothedCm = Math.round(sorted[Math.floor(sorted.length / 2)]);
+
+              latestAiPointsRef.current = {
+                crownY,
+                heelY: heelMaxY,
+                heightCm: smoothedCm,
+              };
+              setLiveAiHeightCm(smoothedCm);
+
+              // Draw live AI-detected crown & heel lines
+              ctx.save();
+              ctx.setLineDash([4, 4]);
+              ctx.strokeStyle = '#22d3ee';
+              ctx.lineWidth = 2;
+              ctx.beginPath();
+              ctx.moveTo(leftGuideX, crownY * h);
+              ctx.lineTo(rightGuideX, crownY * h);
+              ctx.moveTo(leftGuideX, heelMaxY * h);
+              ctx.lineTo(rightGuideX, heelMaxY * h);
+              ctx.stroke();
+
+              ctx.fillStyle = 'rgba(8, 145, 178, 0.9)';
+              ctx.fillRect(rightGuideX - 108, crownY * h + 4, 104, 22);
+              ctx.fillStyle = '#ffffff';
+              ctx.font = 'bold 11px "JetBrains Mono", monospace';
+              ctx.fillText(`AI: ~${smoothedCm} cm`, rightGuideX - 100, crownY * h + 19);
+              ctx.restore();
+
+              if (bmiAutoCapture && crownY >= 0.03 && heelMaxY <= 0.97 && samples.length >= 4) {
+                setHeightCm(smoothedCm);
+                setUsedCameraAi(true);
+                const now = Date.now();
+                if (now - bmiReadyCueAtRef.current > 5000) {
+                  bmiReadyCueAtRef.current = now;
+                  if (soundRef.current) playSuccessCue();
+                  triggerCueBanner(`AI đã đo chiều cao qua khung lưới: ${smoothedCm} cm`);
+                }
               }
             }
+          } else {
+            latestAiPointsRef.current = null;
+            setLiveAiHeightCm(null);
           }
         }
+      } else if (activeTab === 'bmi') {
+        latestAiPointsRef.current = null;
+        setLiveAiHeightCm(null);
       }
 
       // Draw framing reference lines (Green when chuẩn, Amber otherwise)
@@ -762,27 +831,83 @@ export const CameraPoseTester: React.FC<Props> = ({
         ctx.font = '600 11px "Be Vietnam Pro", sans-serif';
         ctx.fillText('VẠCH ĐÍCH / CỔNG CẢM BIẾN VÒNG', w * 0.5 + 8, h * 0.14);
       } else if (activeTab === 'bmi') {
-        ctx.fillStyle = frameColor;
-        ctx.font = '600 11px "Be Vietnam Pro", sans-serif';
-        ctx.fillText(`VẠCH ĐỈNH KHUNG (${bmiFrameHeightCm} cm)`, leftGuideX + 8, topGuideY - 6);
-        ctx.fillText('VẠCH GÓT CHÂN (0 cm)', leftGuideX + 8, bottomGuideY + 15);
-
-        // Vertical cm ruler ticks along leftGuideX for diverse body heights
         const rulerH = bottomGuideY - topGuideY;
-        const stepCm = bmiFrameHeightCm <= 180 ? 20 : 30;
-        ctx.strokeStyle = frameColor;
-        ctx.lineWidth = 1.5;
-        ctx.font = '600 10px "JetBrains Mono", monospace';
-        for (let cm = 0; cm <= bmiFrameHeightCm; cm += stepCm) {
-          const tickY = bottomGuideY - (cm / bmiFrameHeightCm) * rulerH;
+        const gridW = rightGuideX - leftGuideX;
+
+        // Vertical alignment columns inside height grid
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.22)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([4, 4]);
+        for (const colFrac of [1 / 3, 2 / 3]) {
+          const gx = leftGuideX + gridW * colFrac;
           ctx.beginPath();
-          ctx.moveTo(leftGuideX - 8, tickY);
-          ctx.lineTo(leftGuideX + 4, tickY);
+          ctx.moveTo(gx, topGuideY);
+          ctx.lineTo(gx, bottomGuideY);
           ctx.stroke();
-          if (cm > 0 && cm < bmiFrameHeightCm) {
-            ctx.fillText(`${cm}`, Math.max(4, leftGuideX - 34), tickY + 3);
+        }
+
+        // Horizontal cm grid lines every 10cm (light) & 20cm (labeled)
+        const minorStep = 10;
+        const majorStep = bmiFrameHeightCm <= 180 ? 20 : 20;
+        ctx.font = '600 10px "JetBrains Mono", monospace';
+        for (let cm = 0; cm <= bmiFrameHeightCm; cm += minorStep) {
+          const tickY = bottomGuideY - (cm / bmiFrameHeightCm) * rulerH;
+          const isMajor = cm % majorStep === 0;
+          ctx.strokeStyle = isMajor ? 'rgba(255, 255, 255, 0.36)' : 'rgba(255, 255, 255, 0.14)';
+          ctx.lineWidth = isMajor ? 1.2 : 0.8;
+          ctx.setLineDash(isMajor ? [6, 4] : [2, 4]);
+          ctx.beginPath();
+          ctx.moveTo(leftGuideX, tickY);
+          ctx.lineTo(rightGuideX, tickY);
+          ctx.stroke();
+
+          if (isMajor) {
+            ctx.fillStyle = '#e2e8f0';
+            ctx.fillText(`${cm}`, Math.max(4, leftGuideX - 30), tickY + 3);
           }
         }
+
+        ctx.setLineDash([]);
+        ctx.fillStyle = frameColor;
+        ctx.font = '600 11px "Be Vietnam Pro", sans-serif';
+        ctx.fillText(`KHUNG LƯỚI CHUẨN (${bmiFrameHeightCm} cm)`, leftGuideX + 6, topGuideY - 6);
+
+        // User-adjustable Grid Marker Lines (Đỉnh đầu & Gót chân)
+        const headLineY = gridHeadNormY * h;
+        const footLineY = gridFootNormY * h;
+        const gridPreviewCm = Math.min(
+          240,
+          Math.max(50, Math.round(((gridFootNormY - gridHeadNormY) / 0.8) * bmiFrameHeightCm))
+        );
+
+        ctx.strokeStyle = '#38bdf8';
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.moveTo(leftGuideX - 10, headLineY);
+        ctx.lineTo(rightGuideX + 10, headLineY);
+        ctx.stroke();
+        ctx.fillStyle = 'rgba(2, 132, 199, 0.92)';
+        ctx.fillRect(leftGuideX + 4, Math.max(2, headLineY - 20), 118, 18);
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '600 10px "Be Vietnam Pro", sans-serif';
+        ctx.fillText('ĐỈNH ĐẦU (Kéo/chạm)', leftGuideX + 8, Math.max(14, headLineY - 7));
+
+        ctx.strokeStyle = '#fb7185';
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.moveTo(leftGuideX - 10, footLineY);
+        ctx.lineTo(rightGuideX + 10, footLineY);
+        ctx.stroke();
+        ctx.fillStyle = 'rgba(225, 29, 72, 0.92)';
+        ctx.fillRect(leftGuideX + 4, Math.min(h - 20, footLineY + 3), 118, 18);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText('GÓT CHÂN (Kéo/chạm)', leftGuideX + 8, Math.min(h - 7, footLineY + 15));
+
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.84)';
+        ctx.fillRect(rightGuideX - 116, bottomGuideY - 26, 112, 22);
+        ctx.fillStyle = '#38bdf8';
+        ctx.font = 'bold 11px "JetBrains Mono", monospace';
+        ctx.fillText(`Lưới: ${gridPreviewCm} cm`, rightGuideX - 108, bottomGuideY - 11);
       }
 
       // Horizon tilt level bar at top-center
@@ -838,9 +963,12 @@ export const CameraPoseTester: React.FC<Props> = ({
     },
     [
       activeTab,
+      bmiAutoCapture,
       bmiFrameHeightCm,
       deviceTiltDeg,
       enduranceMode,
+      gridFootNormY,
+      gridHeadNormY,
       jumpSpanCm,
       jumpStartNormX,
       jumpTracking,
@@ -849,6 +977,84 @@ export const CameraPoseTester: React.FC<Props> = ({
       triggerShakeAlert,
     ]
   );
+
+  const drawAlignmentAndPoseRef = useRef(drawAlignmentAndPose);
+  drawAlignmentAndPoseRef.current = drawAlignmentAndPose;
+
+  const gridComputedHeightCm = useMemo(
+    () =>
+      Math.min(
+        240,
+        Math.max(50, Math.round(((gridFootNormY - gridHeadNormY) / 0.8) * bmiFrameHeightCm))
+      ),
+    [gridFootNormY, gridHeadNormY, bmiFrameHeightCm]
+  );
+
+  const handleCalculateFromGrid = () => {
+    setHeightCm(gridComputedHeightCm);
+    setUsedCameraAi(true);
+    if (soundRef.current) playSuccessCue();
+    triggerCueBanner(`Đã tính chiều cao qua khung lưới: ${gridComputedHeightCm} cm`);
+  };
+
+  const handleMeasureHeightAi = () => {
+    setBmiScanning(true);
+    window.setTimeout(() => {
+      setBmiScanning(false);
+      const aiPoints = latestAiPointsRef.current;
+      if (cameraActive && aiPoints) {
+        const clampedH = Math.min(240, Math.max(55, aiPoints.heightCm));
+        setGridHeadNormY(Math.max(0.02, Math.min(0.85, aiPoints.crownY)));
+        setGridFootNormY(Math.max(0.15, Math.min(0.98, aiPoints.heelY)));
+        setHeightCm(clampedH);
+        setUsedCameraAi(true);
+        if (soundRef.current) playSuccessCue();
+        triggerCueBanner(`AI đã đo & tính chiều cao qua khung lưới: ${clampedH} cm`);
+      } else {
+        setHeightCm(gridComputedHeightCm);
+        setUsedCameraAi(true);
+        if (soundRef.current) playSuccessCue();
+        triggerCueBanner(
+          cameraActive
+            ? `AI chưa khóa đủ khớp chân/đầu — Đã tính theo vạch khung lưới: ${gridComputedHeightCm} cm`
+            : `Đã tính chiều cao theo vạch khung lưới: ${gridComputedHeightCm} cm`
+        );
+      }
+    }, 350);
+  };
+
+  const handleHeightCanvasPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (activeTab !== 'bmi' || !cameraActive) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    if (!rect.height) return;
+    const y = Math.max(0.02, Math.min(0.98, (e.clientY - rect.top) / rect.height));
+    const distHead = Math.abs(y - gridHeadNormY);
+    const distFoot = Math.abs(y - gridFootNormY);
+    if (distHead <= distFoot) {
+      draggingMarkerRef.current = 'head';
+      setGridHeadNormY(Math.min(gridFootNormY - 0.08, y));
+    } else {
+      draggingMarkerRef.current = 'foot';
+      setGridFootNormY(Math.max(gridHeadNormY + 0.08, y));
+    }
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+
+  const handleHeightCanvasPointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (activeTab !== 'bmi' || !draggingMarkerRef.current) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    if (!rect.height) return;
+    const y = Math.max(0.02, Math.min(0.98, (e.clientY - rect.top) / rect.height));
+    if (draggingMarkerRef.current === 'head') {
+      setGridHeadNormY(Math.min(gridFootNormY - 0.08, y));
+    } else {
+      setGridFootNormY(Math.max(gridHeadNormY + 0.08, y));
+    }
+  };
+
+  const handleHeightCanvasPointerUp = () => {
+    draggingMarkerRef.current = null;
+  };
 
   const startCamera = async (overrideFacing?: 'environment' | 'user') => {
     setCameraError('');
@@ -890,13 +1096,13 @@ export const CameraPoseTester: React.FC<Props> = ({
             lastVideoTime = video.currentTime;
             try {
               const result = landmarker.detectForVideo(video, performance.now());
-              drawAlignmentAndPose(result.landmarks?.[0] ?? null, vw, vh);
+              drawAlignmentAndPoseRef.current(result.landmarks?.[0] ?? null, vw, vh);
             } catch {
-              drawAlignmentAndPose(null, vw, vh);
+              drawAlignmentAndPoseRef.current(null, vw, vh);
             }
           }
         } else {
-          drawAlignmentAndPose(null, vw, vh);
+          drawAlignmentAndPoseRef.current(null, vw, vh);
         }
         rafRef.current = requestAnimationFrame(detectFrame);
       };
@@ -1081,21 +1287,27 @@ export const CameraPoseTester: React.FC<Props> = ({
           {/* Camera Feed & Canvas Alignment Overlay */}
           <div
             className={`relative bg-slate-950 w-full overflow-hidden flex items-center justify-center ${
-              cameraActive ? 'aspect-[4/3] sm:aspect-video' : 'min-h-[260px] sm:aspect-video'
+              cameraActive ? 'min-h-[260px]' : 'min-h-[260px] sm:aspect-video'
             }`}
           >
-            <video
-              ref={videoRef}
-              playsInline
-              muted
-              className={`w-full h-full object-cover ${cameraActive ? 'block' : 'hidden'}`}
-            />
-            <canvas
-              ref={canvasRef}
-              className={`absolute inset-0 w-full h-full pointer-events-none ${
-                cameraActive ? 'block' : 'hidden'
-              }`}
-            />
+            <div className={`relative inline-block max-w-full ${cameraActive ? 'block' : 'hidden'}`}>
+              <video
+                ref={videoRef}
+                playsInline
+                muted
+                className="block max-h-[68vh] max-w-full w-auto h-auto"
+              />
+              <canvas
+                ref={canvasRef}
+                onPointerDown={handleHeightCanvasPointerDown}
+                onPointerMove={handleHeightCanvasPointerMove}
+                onPointerUp={handleHeightCanvasPointerUp}
+                onPointerCancel={handleHeightCanvasPointerUp}
+                className={`absolute inset-0 w-full h-full ${
+                  activeTab === 'bmi' ? 'pointer-events-auto touch-none cursor-ns-resize' : 'pointer-events-none'
+                }`}
+              />
+            </div>
 
             {!cameraActive && (
               <div className="text-center p-4 sm:p-6 space-y-2.5 sm:space-y-3 max-w-md">
@@ -1378,10 +1590,61 @@ export const CameraPoseTester: React.FC<Props> = ({
             )}
 
             {activeTab === 'bmi' && (
-              <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-2.5 text-xs">
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 space-y-3 text-xs">
                 <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="space-y-0.5">
+                    <div className="font-semibold text-slate-900">
+                      Đo chiều cao qua khung lưới &amp; AI
+                    </div>
+                    <div className="text-[11px] text-slate-600">
+                      {liveAiHeightCm !== null ? (
+                        <span>
+                          AI đang nhận diện:{' '}
+                          <strong className="font-mono text-teal-700">{liveAiHeightCm} cm</strong> · Theo vạch lưới:{' '}
+                          <strong className="font-mono text-sky-700">{gridComputedHeightCm} cm</strong>
+                        </span>
+                      ) : (
+                        <span>
+                          Kéo 2 vạch Đỉnh đầu / Gót chân trên màn hình camera hoặc dùng thanh trượt, rồi bấm nút Đo để AI tính chiều cao:{' '}
+                          <strong className="font-mono text-sky-700">{gridComputedHeightCm} cm</strong>
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={bmiScanning}
+                      onClick={handleMeasureHeightAi}
+                      className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-teal-700 hover:bg-teal-800 disabled:opacity-50 rounded-lg min-h-[40px] whitespace-nowrap"
+                    >
+                      <Camera className="w-3.5 h-3.5" />
+                      {bmiScanning ? 'Đang quét AI...' : 'Đo chiều cao (AI)'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleCalculateFromGrid}
+                      className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-sky-800 bg-sky-50 border border-sky-300 hover:bg-sky-100 rounded-lg min-h-[40px] whitespace-nowrap"
+                    >
+                      <Ruler className="w-3.5 h-3.5" />
+                      Tính từ vạch lưới ({gridComputedHeightCm} cm)
+                    </button>
+                  </div>
+                </div>
+
+                <label className="flex items-center gap-2 text-[11px] text-slate-700 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={bmiAutoCapture}
+                    onChange={(e) => setBmiAutoCapture(e.target.checked)}
+                    className="w-4 h-4 accent-teal-700"
+                  />
+                  <span>Tự động cập nhật chiều cao khi AI nhận diện đủ đầu &amp; gót chân trong khung lưới</span>
+                </label>
+
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-200">
                   <div>
-                    Chiều cao khung thước chuẩn (gót → đỉnh khung):{' '}
+                    Chiều cao khung lưới chuẩn (0 → đỉnh lưới):{' '}
                     <strong className="font-mono">{bmiFrameHeightCm} cm</strong>
                   </div>
                   <input
@@ -1393,6 +1656,7 @@ export const CameraPoseTester: React.FC<Props> = ({
                     className="w-48"
                   />
                 </div>
+
                 <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
                   <span className="text-slate-500 mr-1">Thước theo đối tượng:</span>
                   {[
@@ -1414,6 +1678,35 @@ export const CameraPoseTester: React.FC<Props> = ({
                       {preset.label}
                     </button>
                   ))}
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1 border-t border-slate-200">
+                  <label className="block">
+                    <span className="text-sky-800 font-medium">
+                      Vạch Đỉnh đầu trên lưới ({Math.round(gridHeadNormY * 100)}%)
+                    </span>
+                    <input
+                      type="range"
+                      min="2"
+                      max={Math.round(gridFootNormY * 100) - 8}
+                      value={Math.round(gridHeadNormY * 100)}
+                      onChange={(e) => setGridHeadNormY(Number(e.target.value) / 100)}
+                      className="w-full mt-1 accent-sky-600"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="text-rose-800 font-medium">
+                      Vạch Gót chân trên lưới ({Math.round(gridFootNormY * 100)}%)
+                    </span>
+                    <input
+                      type="range"
+                      min={Math.round(gridHeadNormY * 100) + 8}
+                      max="98"
+                      value={Math.round(gridFootNormY * 100)}
+                      onChange={(e) => setGridFootNormY(Number(e.target.value) / 100)}
+                      className="w-full mt-1 accent-rose-600"
+                    />
+                  </label>
                 </div>
               </div>
             )}
