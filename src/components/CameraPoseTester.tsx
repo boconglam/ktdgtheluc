@@ -95,35 +95,77 @@ interface ToneStep {
   gain?: number;
 }
 
-function playToneSequence(steps: ToneStep[]) {
+let sharedAudioCtx: AudioContext | null = null;
+
+function getSharedAudioContext(): AudioContext | null {
   try {
     const AudioCtx =
       window.AudioContext ||
-      (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-    if (!AudioCtx) return;
-    const ctx = new AudioCtx();
-    let maxEndMs = 0;
+      (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AudioCtx) return null;
+    if (!sharedAudioCtx || sharedAudioCtx.state === 'closed') {
+      sharedAudioCtx = new AudioCtx();
+    }
+    return sharedAudioCtx;
+  } catch {
+    return null;
+  }
+}
 
-    steps.forEach((step) => {
-      const startSec = ctx.currentTime + (step.delayMs ?? 0) / 1000;
-      const durSec = step.durationMs / 1000;
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = step.type ?? 'sine';
-      osc.frequency.setValueAtTime(step.freq, startSec);
-      gain.gain.setValueAtTime(step.gain ?? 0.09, startSec);
-      gain.gain.exponentialRampToValueAtTime(0.001, startSec + durSec);
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start(startSec);
-      osc.stop(startSec + durSec + 0.02);
-      const endMs = (step.delayMs ?? 0) + step.durationMs + 50;
-      if (endMs > maxEndMs) maxEndMs = endMs;
-    });
+function unlockAudioContext() {
+  try {
+    const ctx = getSharedAudioContext();
+    if (!ctx) return;
+    if (ctx.state === 'suspended') {
+      void ctx.resume();
+    }
+    // Play a tiny silent 1-sample buffer to unlock iOS/Android Web Audio hardware inside user gesture
+    const buffer = ctx.createBuffer(1, 1, 22050);
+    const source = ctx.createBufferSource();
+    source.buffer = buffer;
+    source.connect(ctx.destination);
+    source.start(0);
+  } catch {
+    // Ignore audio context restrictions
+  }
+}
 
-    window.setTimeout(() => {
-      void ctx.close();
-    }, maxEndMs + 100);
+function scheduleToneSteps(ctx: AudioContext, steps: ToneStep[]) {
+  const baseTime = ctx.currentTime + 0.015;
+  steps.forEach((step) => {
+    const startSec = baseTime + (step.delayMs ?? 0) / 1000;
+    const durSec = step.durationMs / 1000;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = step.type ?? 'sine';
+    osc.frequency.setValueAtTime(step.freq, startSec);
+    const peakGain = step.gain ?? 0.18;
+    gain.gain.setValueAtTime(0.001, startSec);
+    gain.gain.linearRampToValueAtTime(peakGain, startSec + 0.012);
+    gain.gain.exponentialRampToValueAtTime(0.001, startSec + durSec);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(startSec);
+    osc.stop(startSec + durSec + 0.03);
+  });
+}
+
+function playToneSequence(steps: ToneStep[]) {
+  try {
+    const ctx = getSharedAudioContext();
+    if (!ctx) return;
+    if (ctx.state === 'suspended') {
+      void ctx
+        .resume()
+        .then(() => {
+          scheduleToneSteps(ctx, steps);
+        })
+        .catch(() => {
+          // Ignore autoplay restriction until user gesture
+        });
+      return;
+    }
+    scheduleToneSteps(ctx, steps);
   } catch {
     // Ignore audio context restrictions
   }
@@ -131,30 +173,31 @@ function playToneSequence(steps: ToneStep[]) {
 
 function playReadyChime() {
   playToneSequence([
-    { freq: 587, durationMs: 90, delayMs: 0, type: 'sine', gain: 0.08 },
-    { freq: 880, durationMs: 140, delayMs: 95, type: 'sine', gain: 0.1 },
+    { freq: 587, durationMs: 100, delayMs: 0, type: 'sine', gain: 0.18 },
+    { freq: 880, durationMs: 110, delayMs: 105, type: 'sine', gain: 0.2 },
+    { freq: 1175, durationMs: 180, delayMs: 220, type: 'sine', gain: 0.22 },
   ]);
 }
 
 function playSuccessCue() {
   playToneSequence([
-    { freq: 988, durationMs: 85, delayMs: 0, type: 'triangle', gain: 0.1 },
-    { freq: 1318, durationMs: 130, delayMs: 90, type: 'triangle', gain: 0.11 },
+    { freq: 988, durationMs: 95, delayMs: 0, type: 'triangle', gain: 0.18 },
+    { freq: 1318, durationMs: 150, delayMs: 100, type: 'triangle', gain: 0.22 },
   ]);
 }
 
 function playTimerEndAlarm() {
   playToneSequence([
-    { freq: 660, durationMs: 180, delayMs: 0, type: 'square', gain: 0.08 },
-    { freq: 660, durationMs: 180, delayMs: 240, type: 'square', gain: 0.08 },
-    { freq: 880, durationMs: 320, delayMs: 480, type: 'square', gain: 0.09 },
+    { freq: 660, durationMs: 180, delayMs: 0, type: 'square', gain: 0.14 },
+    { freq: 660, durationMs: 180, delayMs: 240, type: 'square', gain: 0.14 },
+    { freq: 880, durationMs: 340, delayMs: 480, type: 'square', gain: 0.16 },
   ]);
 }
 
 function playShakeWarningTone() {
   playToneSequence([
-    { freq: 240, durationMs: 140, delayMs: 0, type: 'sawtooth', gain: 0.09 },
-    { freq: 180, durationMs: 200, delayMs: 160, type: 'sawtooth', gain: 0.09 },
+    { freq: 240, durationMs: 150, delayMs: 0, type: 'sawtooth', gain: 0.16 },
+    { freq: 180, durationMs: 210, delayMs: 170, type: 'sawtooth', gain: 0.16 },
   ]);
 }
 
@@ -549,18 +592,24 @@ export const CameraPoseTester: React.FC<Props> = ({
             Math.PI
         );
         const normalizedTilt = Math.min(shoulderAngle, Math.abs(180 - shoulderAngle));
-        angleTilt = deviceTiltDeg > 0 ? deviceTiltDeg : Math.round(normalizedTilt);
+        // Side-profile exercises (gập bụng, bật xa, chạy bền) shouldn't use front shoulder roll when device orientation isn't active
+        angleTilt =
+          deviceTiltDeg > 0
+            ? deviceTiltDeg
+            : activeTab === 'bmi'
+              ? Math.round(normalizedTilt)
+              : 0;
 
-        const headCut = minY < 0.03;
-        const feetCut = maxY > 0.97;
+        const headCut = minY < 0.015;
+        const feetCut = maxY > 0.985;
 
         if (headCut || feetCut) {
           distanceStatus = 'thieu_khung';
           distanceLabel = 'Chưa thấy đủ đầu/chân — Điều chỉnh góc máy';
-        } else if (bodyRatio > 0.88) {
+        } else if (bodyRatio > 0.92) {
           distanceStatus = 'qua_gan';
           distanceLabel = 'Quá gần — Lùi camera ra xa hơn';
-        } else if (bodyRatio < 0.35 && activeTab !== 'situps') {
+        } else if (bodyRatio < 0.3 && activeTab !== 'situps') {
           distanceStatus = 'qua_xa';
           distanceLabel = 'Quá xa — Đưa camera lại gần hơn';
         } else {
@@ -916,7 +965,7 @@ export const CameraPoseTester: React.FC<Props> = ({
       const levelY = 18;
       ctx.fillStyle = 'rgba(15, 23, 42, 0.72)';
       ctx.fillRect(levelX, levelY, levelW, 20);
-      ctx.strokeStyle = angleTilt <= 4 ? '#10b981' : '#f59e0b';
+      ctx.strokeStyle = angleTilt <= 10 ? '#10b981' : '#f59e0b';
       ctx.lineWidth = 2;
       ctx.beginPath();
       ctx.moveTo(levelX + 12, levelY + 10);
@@ -940,11 +989,11 @@ export const CameraPoseTester: React.FC<Props> = ({
 
       ctx.restore();
 
-      const angleOk = angleTilt <= 5;
+      const angleOk = angleTilt <= 12;
       const isAlignedReady = poseDetected && distanceStatus === 'chuan' && angleOk;
       if (isAlignedReady && !wasAlignedReadyRef.current) {
         const now = Date.now();
-        if (now - lastReadyChimeAtRef.current > 4000) {
+        if (now - lastReadyChimeAtRef.current > 3500) {
           lastReadyChimeAtRef.current = now;
           if (soundRef.current) playReadyChime();
           triggerCueBanner('Đúng vị trí & tư thế kiểm tra — Sẵn sàng thực hiện!');
@@ -991,6 +1040,7 @@ export const CameraPoseTester: React.FC<Props> = ({
   );
 
   const handleCalculateFromGrid = () => {
+    unlockAudioContext();
     setHeightCm(gridComputedHeightCm);
     setUsedCameraAi(true);
     if (soundRef.current) playSuccessCue();
@@ -998,6 +1048,7 @@ export const CameraPoseTester: React.FC<Props> = ({
   };
 
   const handleMeasureHeightAi = () => {
+    unlockAudioContext();
     setBmiScanning(true);
     window.setTimeout(() => {
       setBmiScanning(false);
@@ -1020,10 +1071,11 @@ export const CameraPoseTester: React.FC<Props> = ({
             : `Đã tính chiều cao theo vạch khung lưới: ${gridComputedHeightCm} cm`
         );
       }
-    }, 350);
+    }, 300);
   };
 
   const handleHeightCanvasPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    unlockAudioContext();
     if (activeTab !== 'bmi' || !cameraActive) return;
     const rect = e.currentTarget.getBoundingClientRect();
     if (!rect.height) return;
@@ -1057,6 +1109,8 @@ export const CameraPoseTester: React.FC<Props> = ({
   };
 
   const startCamera = async (overrideFacing?: 'environment' | 'user') => {
+    unlockAudioContext();
+    wasAlignedReadyRef.current = false;
     setCameraError('');
     await requestMotionPermissionIfNeeded();
     stopCamera();
@@ -1267,11 +1321,38 @@ export const CameraPoseTester: React.FC<Props> = ({
               </button>
               <button
                 type="button"
-                onClick={() => setSoundEnabled((v) => !v)}
-                className="min-h-[40px] min-w-[40px] flex items-center justify-center rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50"
+                onClick={() => {
+                  unlockAudioContext();
+                  const next = !soundEnabled;
+                  setSoundEnabled(next);
+                  if (next) {
+                    wasAlignedReadyRef.current = false;
+                    playReadyChime();
+                    triggerCueBanner('Đã bật âm báo vị trí sẵn sàng & kết quả.');
+                  }
+                }}
+                className={`min-h-[40px] px-2.5 inline-flex items-center gap-1 rounded-lg border text-xs font-medium ${
+                  soundEnabled
+                    ? 'border-teal-200 bg-teal-50 text-teal-800 hover:bg-teal-100'
+                    : 'border-slate-200 text-slate-600 hover:bg-slate-50'
+                }`}
                 title={soundEnabled ? 'Tắt âm báo' : 'Bật âm báo'}
               >
                 {soundEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
+                <span className="hidden sm:inline">{soundEnabled ? 'Âm báo' : 'Tắt âm'}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  unlockAudioContext();
+                  setSoundEnabled(true);
+                  playReadyChime();
+                  triggerCueBanner('Đang kiểm tra âm báo vị trí sẵn sàng.');
+                }}
+                className="min-h-[40px] px-2.5 inline-flex items-center rounded-lg border border-slate-200 text-[11px] font-medium text-slate-700 hover:bg-slate-50 whitespace-nowrap"
+                title="Kiểm tra loa & mở khóa âm báo trên thiết bị"
+              >
+                Thử âm
               </button>
               <button
                 type="button"
@@ -1287,7 +1368,7 @@ export const CameraPoseTester: React.FC<Props> = ({
           {/* Camera Feed & Canvas Alignment Overlay */}
           <div
             className={`relative bg-slate-950 w-full overflow-hidden flex items-center justify-center ${
-              cameraActive ? 'min-h-[260px]' : 'min-h-[260px] sm:aspect-video'
+              cameraActive ? 'min-h-[220px]' : 'min-h-[220px] sm:aspect-video'
             }`}
           >
             <div className={`relative inline-block max-w-full ${cameraActive ? 'block' : 'hidden'}`}>
@@ -1295,7 +1376,7 @@ export const CameraPoseTester: React.FC<Props> = ({
                 ref={videoRef}
                 playsInline
                 muted
-                className="block max-h-[68vh] max-w-full w-auto h-auto"
+                className="block max-h-[52vh] sm:max-h-[60vh] max-w-full w-auto h-auto"
               />
               <canvas
                 ref={canvasRef}
@@ -1329,6 +1410,169 @@ export const CameraPoseTester: React.FC<Props> = ({
                 </button>
               </div>
             )}
+          </div>
+
+          {/* Attached Camera Action Bar — Always right beneath the camera frame so full view + action buttons stay visible together on mobile */}
+          <div className="bg-slate-900 border-t border-slate-800 px-3 py-2 text-white flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2 text-xs min-w-0">
+              <span
+                className={`w-2.5 h-2.5 rounded-full shrink-0 ${
+                  cameraActive && alignmentInfo.distanceStatus === 'chuan' && alignmentInfo.angleOk
+                    ? 'bg-emerald-400'
+                    : cameraActive
+                      ? 'bg-amber-400'
+                      : 'bg-slate-500'
+                }`}
+              />
+              {activeTab === 'bmi' && (
+                <div className="truncate font-mono tabular-nums text-[11px] sm:text-xs">
+                  {liveAiHeightCm !== null ? (
+                    <span>
+                      AI: <strong className="text-emerald-300">{liveAiHeightCm} cm</strong> · Lưới:{' '}
+                      <strong className="text-sky-300">{gridComputedHeightCm} cm</strong>
+                    </span>
+                  ) : (
+                    <span>
+                      Lưới: <strong className="text-sky-300">{gridComputedHeightCm} cm</strong> · Đã lưu:{' '}
+                      <strong className="text-white">{heightCm} cm</strong>
+                    </span>
+                  )}
+                </div>
+              )}
+              {activeTab === 'situps' && (
+                <div className="font-mono tabular-nums text-xs">
+                  00:{situpsTimeLeft.toString().padStart(2, '0')} ·{' '}
+                  <strong className="text-emerald-300">{situpsCount} lần</strong>
+                </div>
+              )}
+              {activeTab === 'long_jump' && (
+                <div className="font-mono tabular-nums text-xs">
+                  Kết quả: <strong className="text-emerald-300">{longJumpCm} cm</strong>
+                </div>
+              )}
+              {activeTab === 'endurance' && (
+                <div className="font-mono tabular-nums text-xs">
+                  {formatSecondsToMinSec(enduranceElapsedSec)} ·{' '}
+                  <strong className="text-emerald-300">{enduranceLaps} vòng</strong>
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {activeTab === 'bmi' && (
+                <>
+                  <button
+                    type="button"
+                    disabled={bmiScanning}
+                    onClick={handleMeasureHeightAi}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-teal-600 hover:bg-teal-500 disabled:opacity-50 rounded-lg min-h-[38px] whitespace-nowrap"
+                  >
+                    <Camera className="w-3.5 h-3.5" />
+                    {bmiScanning ? 'Đang quét...' : 'Đo chiều cao (AI)'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleCalculateFromGrid}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold text-sky-100 bg-sky-700/80 hover:bg-sky-600 border border-sky-500/60 rounded-lg min-h-[38px] whitespace-nowrap"
+                  >
+                    <Ruler className="w-3.5 h-3.5" />
+                    Tính lưới ({gridComputedHeightCm} cm)
+                  </button>
+                </>
+              )}
+              {activeTab === 'situps' && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      unlockAudioContext();
+                      void requestMotionPermissionIfNeeded();
+                      if (!situpsRunning && situpsTimeLeft === 0) setSitupsTimeLeft(30);
+                      setSitupsRunning((r) => !r);
+                    }}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-teal-600 hover:bg-teal-500 rounded-lg min-h-[38px] whitespace-nowrap"
+                  >
+                    {situpsRunning ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+                    {situpsRunning ? 'Tạm dừng' : 'Bắt đầu 30s'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSitupsRunning(false);
+                      setSitupsTimeLeft(30);
+                      setSitupsCount(0);
+                      setShakeViolations(0);
+                      setShakeWarningActive(false);
+                      shakeCooldownUntilRef.current = 0;
+                      prevAnchorPosRef.current = null;
+                    }}
+                    className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-slate-200 bg-slate-800 hover:bg-slate-700 rounded-lg min-h-[38px]"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    Đặt lại
+                  </button>
+                </>
+              )}
+              {activeTab === 'long_jump' && (
+                <>
+                  <button
+                    type="button"
+                    disabled={jumpTracking}
+                    onClick={() => {
+                      unlockAudioContext();
+                      jumpPeakXRef.current = jumpStartNormX;
+                      setJumpTracking(true);
+                      if (soundRef.current) playReadyChime();
+                      triggerCueBanner('Đang theo dõi cú bật xa tại chỗ...');
+                    }}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold rounded-lg min-h-[38px] bg-teal-600 text-white hover:bg-teal-500 disabled:opacity-45"
+                  >
+                    <Play className="w-3.5 h-3.5" />
+                    Start
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!jumpTracking}
+                    onClick={() => {
+                      unlockAudioContext();
+                      setJumpTracking(false);
+                      if (soundRef.current) playSuccessCue();
+                      triggerCueBanner(`Đã kết thúc kiểm tra bật xa: ${longJumpCm} cm`);
+                    }}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold rounded-lg min-h-[38px] bg-rose-600 text-white hover:bg-rose-500 disabled:opacity-40"
+                  >
+                    <Square className="w-3.5 h-3.5" />
+                    STOP
+                  </button>
+                </>
+              )}
+              {activeTab === 'endurance' && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      unlockAudioContext();
+                      setEnduranceRunning((r) => !r);
+                    }}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-teal-600 hover:bg-teal-500 rounded-lg min-h-[38px]"
+                  >
+                    {enduranceRunning ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+                    {enduranceRunning ? 'Dừng' : 'Bắt đầu chạy'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEnduranceRunning(false);
+                      setEnduranceElapsedSec(0);
+                      setEnduranceLaps(0);
+                    }}
+                    className="px-2.5 py-1.5 text-xs font-medium text-slate-200 bg-slate-800 hover:bg-slate-700 rounded-lg min-h-[38px]"
+                  >
+                    Đặt lại
+                  </button>
+                </>
+              )}
+            </div>
           </div>
 
           {cameraError && (
@@ -1411,6 +1655,7 @@ export const CameraPoseTester: React.FC<Props> = ({
                     <button
                       type="button"
                       onClick={() => {
+                        unlockAudioContext();
                         void requestMotionPermissionIfNeeded();
                         if (!situpsRunning && situpsTimeLeft === 0) setSitupsTimeLeft(30);
                         setSitupsRunning((r) => !r);
@@ -1464,6 +1709,7 @@ export const CameraPoseTester: React.FC<Props> = ({
                       type="button"
                       disabled={jumpTracking}
                       onClick={() => {
+                        unlockAudioContext();
                         jumpPeakXRef.current = jumpStartNormX;
                         setJumpTracking(true);
                         if (soundRef.current) playReadyChime();
@@ -1478,6 +1724,7 @@ export const CameraPoseTester: React.FC<Props> = ({
                       type="button"
                       disabled={!jumpTracking}
                       onClick={() => {
+                        unlockAudioContext();
                         setJumpTracking(false);
                         if (soundRef.current) playSuccessCue();
                         triggerCueBanner(`Đã kết thúc kiểm tra bật xa: ${longJumpCm} cm`);
@@ -1591,44 +1838,12 @@ export const CameraPoseTester: React.FC<Props> = ({
 
             {activeTab === 'bmi' && (
               <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 space-y-3 text-xs">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="space-y-0.5">
-                    <div className="font-semibold text-slate-900">
-                      Đo chiều cao qua khung lưới &amp; AI
-                    </div>
-                    <div className="text-[11px] text-slate-600">
-                      {liveAiHeightCm !== null ? (
-                        <span>
-                          AI đang nhận diện:{' '}
-                          <strong className="font-mono text-teal-700">{liveAiHeightCm} cm</strong> · Theo vạch lưới:{' '}
-                          <strong className="font-mono text-sky-700">{gridComputedHeightCm} cm</strong>
-                        </span>
-                      ) : (
-                        <span>
-                          Kéo 2 vạch Đỉnh đầu / Gót chân trên màn hình camera hoặc dùng thanh trượt, rồi bấm nút Đo để AI tính chiều cao:{' '}
-                          <strong className="font-mono text-sky-700">{gridComputedHeightCm} cm</strong>
-                        </span>
-                      )}
-                    </div>
+                <div className="space-y-0.5">
+                  <div className="font-semibold text-slate-900">
+                    Hiệu chỉnh khung lưới chiều cao
                   </div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <button
-                      type="button"
-                      disabled={bmiScanning}
-                      onClick={handleMeasureHeightAi}
-                      className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-teal-700 hover:bg-teal-800 disabled:opacity-50 rounded-lg min-h-[40px] whitespace-nowrap"
-                    >
-                      <Camera className="w-3.5 h-3.5" />
-                      {bmiScanning ? 'Đang quét AI...' : 'Đo chiều cao (AI)'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleCalculateFromGrid}
-                      className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-sky-800 bg-sky-50 border border-sky-300 hover:bg-sky-100 rounded-lg min-h-[40px] whitespace-nowrap"
-                    >
-                      <Ruler className="w-3.5 h-3.5" />
-                      Tính từ vạch lưới ({gridComputedHeightCm} cm)
-                    </button>
+                  <div className="text-[11px] text-slate-600">
+                    Kéo trực tiếp 2 vạch Đỉnh đầu / Gót chân trên màn hình camera hoặc chỉnh thanh trượt bên dưới, rồi bấm nút Đo ngay dưới khung hình camera.
                   </div>
                 </div>
 
